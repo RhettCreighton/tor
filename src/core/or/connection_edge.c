@@ -92,6 +92,7 @@
 #include "feature/hs/hs_circuit.h"
 #include "feature/hs/hs_client.h"
 #include "feature/hs/hs_common.h"
+#include "feature/hs/hs_builtin_service.h"
 #include "feature/nodelist/describe.h"
 #include "feature/nodelist/networkstatus.h"
 #include "feature/nodelist/nodelist.h"
@@ -352,6 +353,8 @@ connection_edge_process_inbuf(edge_connection_t *conn, int package_partial)
 
       FALLTHROUGH;
     case EXIT_CONN_STATE_OPEN:
+      /* Check for built-in service connections is handled in connection_exit_connect */
+      
       if (connection_edge_package_raw_inbuf(conn, package_partial, NULL) < 0) {
         /* (We already sent an end cell if possible) */
         connection_mark_for_close(TO_CONN(conn));
@@ -4369,6 +4372,66 @@ connection_exit_connect(edge_connection_t *edge_conn)
   connection_t *conn = TO_CONN(edge_conn);
   int socket_error = 0, result;
   const char *why_failed_exit_policy = NULL;
+
+  /* Check if this is a connection to a built-in service */
+  if (edge_conn->hs_ident && edge_conn->hs_ident->orig_virtual_port) {
+    uint16_t virtual_port = edge_conn->hs_ident->orig_virtual_port;
+    
+    /* Check if this virtual port has a built-in handler */
+    if (hs_has_builtin_service_for_port(virtual_port)) {
+      log_notice(LD_EDGE, "Intercepting connection to built-in service on "
+               "virtual port %d", virtual_port);
+      
+      /* Set state to open */
+      conn->state = EXIT_CONN_STATE_OPEN;
+      
+      /* Step 1: Send CONNECTED cell to tell the client the connection is ready */
+      log_notice(LD_REND, "Sending CONNECTED cell for built-in service on port %d", 
+                 virtual_port);
+      if (connection_edge_send_command(edge_conn,
+                                 RELAY_COMMAND_CONNECTED,
+                                 NULL, 0) < 0) {
+        log_warn(LD_REND, "Failed to send CONNECTED cell");
+        connection_mark_for_close(conn);
+        return;
+      }
+      
+      /* Step 2: Generate HTTP response */
+      const char *response = 
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html\r\n"
+        "Content-Length: 185\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "<html>\n"
+        "<head><title>Hello from Tor</title></head>\n"
+        "<body>\n"
+        "<h1>Hello, Onion World!</h1>\n"
+        "<p>This page is served directly from your Tor process.</p>\n"
+        "<p>No external web server is involved.</p>\n"
+        "</body>\n"
+        "</html>";
+      
+      /* Step 3: Send response immediately (don't wait for request data) */
+      log_notice(LD_REND, "Sending response (%d bytes) for built-in service", 
+                (int)strlen(response));
+      
+      if (connection_edge_send_command(edge_conn,
+                                 RELAY_COMMAND_DATA,
+                                 response, strlen(response)) < 0) {
+        log_warn(LD_REND, "Failed to send response");
+        connection_mark_for_close(conn);
+        return;
+      }
+      
+      /* Step 4: End the stream and close the connection */
+      log_notice(LD_REND, "Ending stream for built-in service");
+      connection_edge_end(edge_conn, END_STREAM_REASON_DONE);
+      connection_mark_for_close(conn);
+                    
+      return;
+    }
+  }
 
   /* Apply exit policy to non-rendezvous connections. */
   if (! connection_edge_is_rendezvous_stream(edge_conn) &&

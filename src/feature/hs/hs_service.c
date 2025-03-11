@@ -48,6 +48,7 @@
 #include "feature/hs/hs_service.h"
 #include "feature/hs/hs_stats.h"
 #include "feature/hs/hs_ob.h"
+#include "feature/hs/hs_builtin_service.h"
 
 #include "feature/dircommon/dir_connection_st.h"
 #include "core/or/edge_connection_st.h"
@@ -4691,6 +4692,12 @@ hs_service_init(void)
   HT_INIT(hs_service_ht, hs_service_map);
 
   hs_service_staging_list = smartlist_new();
+  
+  /* Initialize the built-in service subsystem */
+  hs_builtin_service_init();
+  hs_builtin_service_add_default_handlers();
+  
+  log_notice(LD_REND, "Built-in service subsystem initialized");
 }
 
 /** Release all global storage of the hidden service subsystem. */

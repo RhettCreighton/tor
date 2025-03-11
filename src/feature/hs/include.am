@@ -18,7 +18,8 @@ LIBTOR_APP_A_SOURCES += 				\
 	src/feature/hs/hs_service.c		\
 	src/feature/hs/hs_stats.c		\
 	src/feature/hs/hs_sys.c		\
-	src/feature/hs/hs_metrics_entry.c
+	src/feature/hs/hs_metrics_entry.c	\
+	src/feature/hs/hs_builtin_service.c
 
 # Proof of Work module
 MODULE_POW_SOURCES =				\
@@ -51,4 +52,5 @@ noinst_HEADERS +=					\
 	src/feature/hs/hs_stats.h			\
 	src/feature/hs/hsdir_index_st.h			\
 	src/feature/hs/hs_sys.h			\
-	src/feature/hs/hs_metrics_entry.h
+	src/feature/hs/hs_metrics_entry.h		\
+	src/feature/hs/hs_builtin_service.h
