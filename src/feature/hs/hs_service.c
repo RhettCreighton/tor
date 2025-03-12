@@ -4503,7 +4503,7 @@ hs_service_load_all_keys(void)
    * is ready to be used. Register them to the global map. Once this is over,
    * the staging list will be cleaned up. */
   register_all_services();
-
+  
   /* All keys have been loaded successfully. */
   return 0;
  err:
@@ -4698,6 +4698,7 @@ hs_service_init(void)
   hs_builtin_service_add_default_handlers();
   
   log_notice(LD_REND, "Built-in service subsystem initialized");
+  
 }
 
 /** Release all global storage of the hidden service subsystem. */
@@ -4706,6 +4707,7 @@ hs_service_free_all(void)
 {
   service_free_all();
   hs_config_free_all();
+  
 }
 
 #ifdef TOR_UNIT_TESTS

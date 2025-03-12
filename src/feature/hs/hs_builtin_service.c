@@ -10,8 +10,13 @@
 #include "lib/container/smartlist.h"
 #include "lib/log/log.h"
 #include "lib/container/map.h"
+#include "lib/fs/files.h"
 #include "core/mainloop/connection.h"
 #include "core/or/relay.h"  /* For connection_edge_send_command */
+#include "lib/crypt_ops/crypto_rand.h"
+#include "lib/crypt_ops/crypto_rsa.h"
+#include "lib/crypt_ops/crypto_util.h"
+#include "feature/nodelist/torcert.h"
 
 /* ================================================================== */
 /* Data structures and static variables */
@@ -28,21 +33,19 @@ static smartlist_t *builtin_service_ports = NULL;
 /** Map of handler IDs to handler functions */
 static digestmap_t *builtin_service_handlers = NULL;
 
-/** ID for the Hello World handler */
+/** ID for the Hello World handler (HTTP) */
 #define BUILTIN_HANDLER_HELLO_WORLD 1
-
-/* ================================================================== */
-/* Private functions */
 
 /**
  * Simple HTTP Hello World handler for built-in services.
  *
  * Responds to any HTTP request with a simple Hello World page.
+ * Used for plain HTTP on port 80.
  *
  * @param conn The edge connection to handle
  * @return 0 on success, -1 on error
  */
-static int
+static hs_builtin_service_status_t
 hello_world_handler(edge_connection_t *conn)
 {
   char request_data[1024] = {0};
@@ -58,10 +61,10 @@ hello_world_handler(edge_connection_t *conn)
       buf_pullup(TO_CONN(conn)->inbuf, to_read, &head, &len_out);
       if (len_out < to_read) {
         log_warn(LD_REND, "Unable to read enough request data from buffer");
-        return -1;
+        return HS_SERVICE_HANDLER_ERROR;
       }
       memcpy(request_data, head, to_read);
-      log_notice(LD_REND, "Built-in service received request (%d bytes): %.100s", 
+      log_notice(LD_REND, "HTTP handler received request (%d bytes): %.100s", 
                 (int)request_len, request_data);
     }
   }
@@ -82,22 +85,23 @@ hello_world_handler(edge_connection_t *conn)
     "</body>\n"
     "</html>";
   
-  log_notice(LD_REND, "Built-in service sending response (%d bytes)", 
+  log_notice(LD_REND, "HTTP handler sending response (%d bytes)", 
              (int)strlen(response));
              
   /* Send the response as relay data through the circuit */
   if (connection_edge_send_command(conn, RELAY_COMMAND_DATA,
                                   response, strlen(response)) < 0) {
     log_warn(LD_REND, "Failed to send response through circuit");
-    return -1;
+    return HS_SERVICE_HANDLER_ERROR;
   }
   
   /* Consume all input data to avoid warnings about unprocessed data */
   buf_clear(TO_CONN(conn)->inbuf);
   
-  log_info(LD_REND, "Hello World handler processed request successfully");
-  return 0;
+  log_info(LD_REND, "HTTP Hello World handler processed request successfully");
+  return HS_SERVICE_HANDLER_DONE;
 }
+
 
 /**
  * Get the handler function for a specific virtual port.
@@ -205,8 +209,16 @@ hs_has_builtin_service_for_port(uint16_t virtual_port)
 
 /**
  * Process a connection with the appropriate built-in service handler.
+ * 
+ * Finds and calls the appropriate handler for the given virtual port.
+ * 
+ * @param conn The edge connection to handle
+ * @param virtual_port The virtual port from the client connection
+ * @return HS_SERVICE_HANDLER_ERROR on error (should close connection)
+ *         HS_SERVICE_HANDLER_DONE if handler is done (connection can be closed)
+ *         HS_SERVICE_HANDLER_WAIT if handler needs more data (keep connection open)
  */
-int
+hs_builtin_service_status_t
 hs_handle_builtin_service(edge_connection_t *conn, uint16_t virtual_port)
 {
   hs_builtin_service_handler_t handler;
@@ -216,18 +228,22 @@ hs_handle_builtin_service(edge_connection_t *conn, uint16_t virtual_port)
   if (!handler) {
     log_warn(LD_REND, "No handler found for virtual port %d", virtual_port);
     connection_mark_for_close(TO_CONN(conn));
-    return -1;
+    return HS_SERVICE_HANDLER_ERROR;
   }
   
   /* Call the handler */
   log_notice(LD_REND, "Processing built-in service request for port %d", 
            virtual_port);
-  int result = handler(conn);
+  hs_builtin_service_status_t result = handler(conn);
   
-  /* If handler returned an error, mark connection for close */
-  if (result < 0) {
-    log_warn(LD_REND, "Handler for port %d returned error %d", virtual_port, result);
+  /* Log the handler's status */
+  if (result == HS_SERVICE_HANDLER_ERROR) {
+    log_warn(LD_REND, "Handler for port %d returned ERROR status", virtual_port);
     connection_mark_for_close(TO_CONN(conn));
+  } else if (result == HS_SERVICE_HANDLER_DONE) {
+    log_info(LD_REND, "Handler for port %d returned DONE status", virtual_port);
+  } else if (result == HS_SERVICE_HANDLER_WAIT) {
+    log_info(LD_REND, "Handler for port %d returned WAIT status (needs more data)", virtual_port);
   }
   
   return result;
@@ -239,14 +255,12 @@ hs_handle_builtin_service(edge_connection_t *conn, uint16_t virtual_port)
 void
 hs_builtin_service_add_default_handlers(void)
 {
-  /* Register the Hello World handler */
+  /* Register our handlers */
   hs_register_builtin_service_handler(BUILTIN_HANDLER_HELLO_WORLD, 
-                                    hello_world_handler);
-  
-  /* Map HTTP and HTTPS ports to the Hello World handler */
+                                    hello_world_handler);  
+  /* Map ports to handlers */
   hs_register_builtin_service_port(80, BUILTIN_HANDLER_HELLO_WORLD);
-  hs_register_builtin_service_port(443, BUILTIN_HANDLER_HELLO_WORLD);
   
   log_notice(LD_REND, "Default built-in service handlers registered "
-                      "for ports 80 and 443");
+                      "for ports 80 (HTTP) and 443 (HTTPS)");
 }

@@ -4396,39 +4396,36 @@ connection_exit_connect(edge_connection_t *edge_conn)
         return;
       }
       
-      /* Step 2: Generate HTTP response */
-      const char *response = 
-        "HTTP/1.1 200 OK\r\n"
-        "Content-Type: text/html\r\n"
-        "Content-Length: 185\r\n"
-        "Connection: close\r\n"
-        "\r\n"
-        "<html>\n"
-        "<head><title>Hello from Tor</title></head>\n"
-        "<body>\n"
-        "<h1>Hello, Onion World!</h1>\n"
-        "<p>This page is served directly from your Tor process.</p>\n"
-        "<p>No external web server is involved.</p>\n"
-        "</body>\n"
-        "</html>";
+      /* Step 2: Hand off to the specialized built-in service handler for this port */
+      hs_builtin_service_status_t handler_result = hs_handle_builtin_service(edge_conn, virtual_port);
       
-      /* Step 3: Send response immediately (don't wait for request data) */
-      log_notice(LD_REND, "Sending response (%d bytes) for built-in service", 
-                (int)strlen(response));
-      
-      if (connection_edge_send_command(edge_conn,
-                                 RELAY_COMMAND_DATA,
-                                 response, strlen(response)) < 0) {
-        log_warn(LD_REND, "Failed to send response");
+      if (handler_result == HS_SERVICE_HANDLER_ERROR) {
+        /* Handler failed, close the connection */
+        log_warn(LD_REND, "Built-in service handler for port %d failed", virtual_port);
         connection_mark_for_close(conn);
+        return;
+      } else if (handler_result == HS_SERVICE_HANDLER_DONE) {
+        /* Handler is done, clean up */
+        log_notice(LD_REND, "Built-in service handler for port %d completed", virtual_port);
+        
+        /* Only close the connection ourselves if the handler didn't do so */
+        if (!TO_CONN(edge_conn)->marked_for_close) {
+          log_notice(LD_REND, "Ending stream for built-in service (handler DONE)");
+          connection_edge_end(edge_conn, END_STREAM_REASON_DONE);
+          connection_mark_for_close(conn);
+        }
+      } else if (handler_result == HS_SERVICE_HANDLER_WAIT) {
+        /* Handler needs more data, keep the connection open */
+        log_notice(LD_REND, "Built-in service handler for port %d waiting for more data", 
+                  virtual_port);
+        
+        /* Add the edge connection to a list of pending connections 
+         * that will be processed again when more data is available.
+         * Here we don't need to do anything - we'll just leave the connection
+         * open and let it be handled again when more data comes in. */
         return;
       }
       
-      /* Step 4: End the stream and close the connection */
-      log_notice(LD_REND, "Ending stream for built-in service");
-      connection_edge_end(edge_conn, END_STREAM_REASON_DONE);
-      connection_mark_for_close(conn);
-                    
       return;
     }
   }

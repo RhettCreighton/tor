@@ -181,6 +181,9 @@ struct connection_t {
   /** Bytes written since last call to control_event_conn_bandwidth_used().
    * Only used if we're configured to emit CONN_BW events. */
   uint32_t n_written_conn_bw;
+  
+  /** TLS session state pointer for built-in HTTPS services */
+  void *tls_session;
 };
 
 /** True iff <b>x</b> is an edge connection. */

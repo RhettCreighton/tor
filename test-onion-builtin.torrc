@@ -1,0 +1,20 @@
+## Minimal Tor configuration for testing the built-in web service
+
+# Disable client functionality - we don't need it
+SocksPort 0
+ControlPort 0
+
+# Directory for storing data
+DataDirectory /tmp/tor-test-data
+
+# Hidden service configuration
+HiddenServiceDir /tmp/tor-test-data/hidden_service
+
+# Enable virtual ports without target addresses
+# The code will detect these special port configurations
+HiddenServicePort 80 127.0.0.1:1
+HiddenServicePort 443 127.0.0.1:1
+
+# Log info to see what's happening
+Log notice stdout
+Log info file /tmp/tor-test.log
