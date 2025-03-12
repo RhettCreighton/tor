@@ -17,6 +17,7 @@
 #include "lib/crypt_ops/crypto_rsa.h"
 #include "lib/crypt_ops/crypto_util.h"
 #include "feature/nodelist/torcert.h"
+#include <sys/stat.h>
 
 /* ================================================================== */
 /* Data structures and static variables */
@@ -37,9 +38,9 @@ static digestmap_t *builtin_service_handlers = NULL;
 #define BUILTIN_HANDLER_HELLO_WORLD 1
 
 /**
- * Simple HTTP Hello World handler for built-in services.
+ * Static site handler for built-in services.
  *
- * Responds to any HTTP request with a simple Hello World page.
+ * Serves static HTML files from a directory.
  * Used for plain HTTP on port 80.
  *
  * @param conn The edge connection to handle
@@ -50,6 +51,7 @@ hello_world_handler(edge_connection_t *conn)
 {
   char request_data[1024] = {0};
   size_t request_len = 0;
+  char requested_path[256] = {0};
   
   /* Read the request data if any */
   if (TO_CONN(conn)->inbuf) {
@@ -66,39 +68,146 @@ hello_world_handler(edge_connection_t *conn)
       memcpy(request_data, head, to_read);
       log_notice(LD_REND, "HTTP handler received request (%d bytes): %.100s", 
                 (int)request_len, request_data);
+                
+      /* Parse the request to get the requested path */
+      if (sscanf(request_data, "GET %255s", requested_path) != 1) {
+        strcpy(requested_path, "/");
+      }
+    } else {
+      strcpy(requested_path, "/");
+    }
+  } else {
+    strcpy(requested_path, "/");
+  }
+  
+  /* Default to index.html if the path is / */
+  if (strcmp(requested_path, "/") == 0) {
+    strcpy(requested_path, "/index.html");
+  }
+  
+  /* Construct the file path */
+  char file_path[512];
+  snprintf(file_path, sizeof(file_path), "/tmp/static_site%s", requested_path);
+  
+  log_notice(LD_REND, "Attempting to serve file: %s", file_path);
+  
+  /* Try to read the requested file */
+  char *file_content = NULL;
+  struct stat st;
+  memset(&st, 0, sizeof(st));
+  
+  /* Check if it's a directory first */
+  if (file_status(file_path) == FN_DIR) {
+    /* If it's a directory, try to serve index.html in that directory */
+    char index_path[1024]; /* Increase buffer size to avoid truncation warning */
+    tor_snprintf(index_path, sizeof(index_path), "%s/index.html", file_path);
+    
+    if (file_status(index_path) == FN_FILE) {
+      /* Use the index.html file path instead */
+      strlcpy(file_path, index_path, sizeof(file_path));
+      log_notice(LD_REND, "Directory access, serving index: %s", file_path);
     }
   }
   
-  /* Prepare a simple HTTP response with Hello World */
-  const char *response = 
-    "HTTP/1.1 200 OK\r\n"
-    "Content-Type: text/html\r\n"
-    "Content-Length: 185\r\n"
-    "Connection: close\r\n"
-    "\r\n"
-    "<html>\n"
-    "<head><title>Hello from Tor</title></head>\n"
-    "<body>\n"
-    "<h1>Hello, Onion World!</h1>\n"
-    "<p>This page is served directly from your Tor process.</p>\n"
-    "<p>No external web server is involved.</p>\n"
-    "</body>\n"
-    "</html>";
+  /* Now try to read the file */
+  if (file_status(file_path) == FN_FILE) {
+    file_content = read_file_to_str(file_path, RFTS_BIN, &st);
+    log_notice(LD_REND, "Read file of size: %zu bytes", (size_t)st.st_size);
+  }
   
-  log_notice(LD_REND, "HTTP handler sending response (%d bytes)", 
-             (int)strlen(response));
-             
-  /* Send the response as relay data through the circuit */
-  if (connection_edge_send_command(conn, RELAY_COMMAND_DATA,
-                                  response, strlen(response)) < 0) {
-    log_warn(LD_REND, "Failed to send response through circuit");
-    return HS_SERVICE_HANDLER_ERROR;
+  size_t file_size = file_content ? (size_t)st.st_size : 0;
+  
+  if (!file_content) {
+    /* File not found, serve a 404 page */
+    const char *not_found = "HTTP/1.1 404 Not Found\r\n"
+                           "Content-Type: text/html\r\n"
+                           "Content-Length: 172\r\n"
+                           "Connection: close\r\n"
+                           "\r\n"
+                           "<html>\n"
+                           "<head><title>404 Not Found</title></head>\n"
+                           "<body>\n"
+                           "<h1>404 Not Found</h1>\n"
+                           "<p>The requested page could not be found.</p>\n"
+                           "<p><a href=\"/\">Go to homepage</a></p>\n"
+                           "</body>\n"
+                           "</html>";
+    
+    log_notice(LD_REND, "File not found, sending 404 response");
+    
+    if (connection_edge_send_command(conn, RELAY_COMMAND_DATA,
+                                   not_found, strlen(not_found)) < 0) {
+      log_warn(LD_REND, "Failed to send 404 response");
+      return HS_SERVICE_HANDLER_ERROR;
+    }
+  } else {
+    /* File found, serve it */
+    /* Determine content type based on file extension */
+    const char *content_type = "text/plain";
+    if (strcasestr(file_path, ".html") || strcasestr(file_path, ".htm")) {
+      content_type = "text/html";
+    } else if (strcasestr(file_path, ".css")) {
+      content_type = "text/css";
+    } else if (strcasestr(file_path, ".js")) {
+      content_type = "application/javascript";
+    } else if (strcasestr(file_path, ".jpg") || strcasestr(file_path, ".jpeg")) {
+      content_type = "image/jpeg";
+    } else if (strcasestr(file_path, ".png")) {
+      content_type = "image/png";
+    } else if (strcasestr(file_path, ".gif")) {
+      content_type = "image/gif";
+    }
+    
+    /* Create the HTTP header */
+    char header[1024];
+    snprintf(header, sizeof(header),
+             "HTTP/1.1 200 OK\r\n"
+             "Content-Type: %s\r\n"
+             "Content-Length: %zu\r\n"
+             "Connection: close\r\n"
+             "\r\n", content_type, file_size);
+    
+    log_notice(LD_REND, "Sending file response (%zu bytes, type: %s)", 
+               file_size, content_type);
+    
+    /* Send the header first */
+    if (connection_edge_send_command(conn, RELAY_COMMAND_DATA,
+                                   header, strlen(header)) < 0) {
+      log_warn(LD_REND, "Failed to send response header");
+      tor_free(file_content);
+      return HS_SERVICE_HANDLER_ERROR;
+    }
+    
+    /* Send the file content in chunks to avoid exceeding relay cell payload size limit */
+    const size_t CHUNK_SIZE = 400; /* Stay well under the 509-(1+2+2+4+2) limit */
+    size_t bytes_sent = 0;
+    
+    while (bytes_sent < file_size) {
+      /* Calculate the size of the next chunk */
+      size_t chunk_size = file_size - bytes_sent;
+      if (chunk_size > CHUNK_SIZE)
+        chunk_size = CHUNK_SIZE;
+      
+      /* Send this chunk */
+      if (connection_edge_send_command(conn, RELAY_COMMAND_DATA,
+                                    file_content + bytes_sent, chunk_size) < 0) {
+        log_warn(LD_REND, "Failed to send file content chunk at offset %zu", bytes_sent);
+        tor_free(file_content);
+        return HS_SERVICE_HANDLER_ERROR;
+      }
+      
+      bytes_sent += chunk_size;
+      log_debug(LD_REND, "Sent chunk of %zu bytes, total sent: %zu/%zu", 
+               chunk_size, bytes_sent, file_size);
+    }
+    
+    tor_free(file_content);
   }
   
   /* Consume all input data to avoid warnings about unprocessed data */
   buf_clear(TO_CONN(conn)->inbuf);
   
-  log_info(LD_REND, "HTTP Hello World handler processed request successfully");
+  log_info(LD_REND, "Static file handler processed request successfully");
   return HS_SERVICE_HANDLER_DONE;
 }
 
