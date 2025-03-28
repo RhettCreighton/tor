@@ -1056,6 +1056,18 @@ write_address_to_file(const hs_service_t *service, const char *fname_)
              escaped(fname));
     goto end;
   }
+  
+  /* Print the onion address to the console for the user to see */
+  printf("\n--------------------------------------------\n");
+  printf("Hidden service is available at: http://%s.%s\n", 
+         service->onion_address, address_tld);
+  printf("--------------------------------------------\n");
+  fflush(stdout); /* Make sure it's displayed immediately */
+  
+  /* Also log through Tor's logging system with highest priority */
+  log_notice(LD_GENERAL, 
+            "ONION SERVICE READY: http://%s.%s", 
+            service->onion_address, address_tld);
 
 #ifndef _WIN32
   if (service->config.dir_group_readable) {
