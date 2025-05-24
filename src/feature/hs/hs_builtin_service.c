@@ -1,6 +1,16 @@
 /**
  * \file hs_builtin_service.c
  * \brief Implementation for the hidden service built-in content system.
+ *
+ * Modifications Copyright 2025 Rhett Creighton
+ * Licensed under the Apache License, Version 2.0
+ *
+ * This file contains modifications to support built-in HTTP handlers
+ * for serving static files and dynamic content directly through Tor's
+ * internal systems without opening local TCP ports.
+ *
+ * Original Tor code is Copyright (c) The Tor Project, Inc.
+ * and licensed under the Tor license. See LICENSE in the tor directory.
  */
 
 #define HS_BUILTIN_SERVICE_PRIVATE
@@ -18,6 +28,9 @@
 #include "lib/crypt_ops/crypto_util.h"
 #include "feature/nodelist/torcert.h"
 #include <sys/stat.h>
+#include <stdlib.h>  /* For getenv */
+#include <time.h>    /* For time functions */
+#include <string.h>  /* For strcmp */
 
 /* ================================================================== */
 /* Data structures and static variables */
@@ -36,6 +49,9 @@ static digestmap_t *builtin_service_handlers = NULL;
 
 /** ID for the Hello World handler (HTTP) */
 #define BUILTIN_HANDLER_HELLO_WORLD 1
+
+/** ID for the Time Server handler */
+#define BUILTIN_HANDLER_TIME_SERVER 2
 
 /**
  * Static site handler for built-in services.
@@ -87,7 +103,11 @@ hello_world_handler(edge_connection_t *conn)
   
   /* Construct the file path */
   char file_path[512];
-  snprintf(file_path, sizeof(file_path), "/tmp/static_site%s", requested_path);
+  const char *static_root = getenv("CHEESEBURGER_STATIC_ROOT");
+  if (!static_root) {
+    static_root = "./static-site";
+  }
+  snprintf(file_path, sizeof(file_path), "%s%s", static_root, requested_path);
   
   log_notice(LD_REND, "Attempting to serve file: %s", file_path);
   
@@ -208,6 +228,100 @@ hello_world_handler(edge_connection_t *conn)
   buf_clear(TO_CONN(conn)->inbuf);
   
   log_info(LD_REND, "Static file handler processed request successfully");
+  return HS_SERVICE_HANDLER_DONE;
+}
+
+/**
+ * Time server handler for built-in services.
+ *
+ * Serves current local time as HTML page.
+ * Used for dynamic HTTP content on port 80.
+ *
+ * @param conn The edge connection to handle
+ * @return HS_SERVICE_HANDLER_DONE on success, HS_SERVICE_HANDLER_ERROR on error
+ */
+static hs_builtin_service_status_t
+time_server_handler(edge_connection_t *conn)
+{
+  log_notice(LD_REND, "Processing time server request");
+  
+  /* Get current time */
+  time_t now = time(NULL);
+  struct tm *local_time = localtime(&now);
+  
+  /* Format time string */
+  char time_str[64];
+  strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", local_time);
+  
+  /* Create HTML response */
+  char html_content[1024];
+  snprintf(html_content, sizeof(html_content),
+           "<!DOCTYPE html>\n"
+           "<html>\n"
+           "<head>\n"
+           "  <title>Cheeseburger Time Server</title>\n"
+           "  <meta http-equiv=\"refresh\" content=\"30\">\n"
+           "  <style>\n"
+           "    body { font-family: Arial, sans-serif; text-align: center; margin-top: 100px; }\n"
+           "    .time { font-size: 48px; color: #333; margin: 20px; }\n"
+           "    .info { font-size: 18px; color: #666; }\n"
+           "  </style>\n"
+           "</head>\n"
+           "<body>\n"
+           "  <h1>🍔 Cheeseburger Time Server</h1>\n"
+           "  <div class=\"time\">%s</div>\n"
+           "  <div class=\"info\">Local time on the server</div>\n"
+           "  <div class=\"info\">Updates every 30 seconds</div>\n"
+           "</body>\n"
+           "</html>",
+           time_str);
+  
+  /* Create the HTTP header */
+  char header[1024];
+  snprintf(header, sizeof(header),
+           "HTTP/1.1 200 OK\r\n"
+           "Content-Type: text/html; charset=UTF-8\r\n"
+           "Content-Length: %zu\r\n"
+           "Cache-Control: no-cache\r\n"
+           "Connection: close\r\n"
+           "\r\n", strlen(html_content));
+  
+  log_notice(LD_REND, "Sending time server response for time: %s", time_str);
+  
+  /* Send the header first */
+  if (connection_edge_send_command(conn, RELAY_COMMAND_DATA,
+                                 header, strlen(header)) < 0) {
+    log_warn(LD_REND, "Failed to send time server response header");
+    return HS_SERVICE_HANDLER_ERROR;
+  }
+  
+  /* Send the HTML content in chunks to avoid exceeding relay cell payload size limit */
+  const size_t CHUNK_SIZE = 400; /* Stay well under the 509-(1+2+2+4+2) limit */
+  size_t content_size = strlen(html_content);
+  size_t bytes_sent = 0;
+  
+  while (bytes_sent < content_size) {
+    /* Calculate the size of the next chunk */
+    size_t chunk_size = content_size - bytes_sent;
+    if (chunk_size > CHUNK_SIZE)
+      chunk_size = CHUNK_SIZE;
+    
+    /* Send this chunk */
+    if (connection_edge_send_command(conn, RELAY_COMMAND_DATA,
+                                  html_content + bytes_sent, chunk_size) < 0) {
+      log_warn(LD_REND, "Failed to send time server content chunk at offset %zu", bytes_sent);
+      return HS_SERVICE_HANDLER_ERROR;
+    }
+    
+    bytes_sent += chunk_size;
+    log_debug(LD_REND, "Sent time server chunk of %zu bytes, total sent: %zu/%zu", 
+             chunk_size, bytes_sent, content_size);
+  }
+  
+  /* Consume all input data */
+  buf_clear(TO_CONN(conn)->inbuf);
+  
+  log_info(LD_REND, "Time server handler processed request successfully");
   return HS_SERVICE_HANDLER_DONE;
 }
 
@@ -364,12 +478,20 @@ hs_handle_builtin_service(edge_connection_t *conn, uint16_t virtual_port)
 void
 hs_builtin_service_add_default_handlers(void)
 {
+  const char *service_type = getenv("CHEESEBURGER_SERVICE_TYPE");
+  
   /* Register our handlers */
   hs_register_builtin_service_handler(BUILTIN_HANDLER_HELLO_WORLD, 
-                                    hello_world_handler);  
-  /* Map ports to handlers */
-  hs_register_builtin_service_port(80, BUILTIN_HANDLER_HELLO_WORLD);
+                                    hello_world_handler);
+  hs_register_builtin_service_handler(BUILTIN_HANDLER_TIME_SERVER,
+                                    time_server_handler);
   
-  log_notice(LD_REND, "Default built-in service handlers registered "
-                      "for ports 80 (HTTP) and 443 (HTTPS)");
+  /* Map ports to handlers based on service type */
+  if (service_type && strcmp(service_type, "time") == 0) {
+    hs_register_builtin_service_port(80, BUILTIN_HANDLER_TIME_SERVER);
+    log_notice(LD_REND, "Registered TIME SERVER handler for port 80");
+  } else {
+    hs_register_builtin_service_port(80, BUILTIN_HANDLER_HELLO_WORLD);
+    log_notice(LD_REND, "Registered STATIC FILE handler for port 80");
+  }
 }
