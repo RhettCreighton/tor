@@ -56,6 +56,9 @@ static digestmap_t *builtin_service_handlers = NULL;
 /** ID for the AI Node handler */
 #define BUILTIN_HANDLER_AI_NODE 3
 
+/** ID for the P2P Protocol handler */
+#define BUILTIN_HANDLER_P2P_PROTOCOL 4
+
 /**
  * Static site handler for built-in services.
  *
@@ -649,6 +652,67 @@ hs_handle_builtin_service(edge_connection_t *conn, uint16_t virtual_port)
 }
 
 /**
+ * P2P Protocol handler for node-to-node communication.
+ *
+ * Handles binary protocol messages for AI node communication.
+ * Used for P2P networking on virtual port 9999.
+ *
+ * @param conn The edge connection to handle
+ * @return Handler status (DONE, WAIT, or ERROR)
+ */
+static hs_builtin_service_status_t
+p2p_protocol_handler(edge_connection_t *conn)
+{
+  log_notice(LD_REND, "P2P protocol handler invoked");
+  
+  /* Check if we have data to read */
+  if (!TO_CONN(conn)->inbuf || connection_get_inbuf_len(TO_CONN(conn)) == 0) {
+    log_notice(LD_REND, "P2P handler: No data yet, waiting...");
+    return HS_SERVICE_HANDLER_WAIT;
+  }
+  
+  /* Read available data */
+  size_t available = connection_get_inbuf_len(TO_CONN(conn));
+  log_notice(LD_REND, "P2P handler: %zu bytes available", available);
+  
+  /* For now, just read up to 4KB of data */
+  uint8_t buffer[4096];
+  size_t to_read = available > sizeof(buffer) ? sizeof(buffer) : available;
+  
+  const char *head;
+  size_t len_out;
+  buf_pullup(TO_CONN(conn)->inbuf, to_read, &head, &len_out);
+  
+  if (len_out < to_read) {
+    log_warn(LD_REND, "P2P handler: Unable to read expected data");
+    return HS_SERVICE_HANDLER_ERROR;
+  }
+  
+  memcpy(buffer, head, to_read);
+  
+  /* Consume the data from input buffer */
+  connection_buf_remove(TO_CONN(conn), to_read);
+  
+  /* Log first few bytes for debugging */
+  char hex_preview[65];
+  size_t preview_len = to_read > 32 ? 32 : to_read;
+  for (size_t i = 0; i < preview_len; i++) {
+    snprintf(hex_preview + i*2, 3, "%02x", buffer[i]);
+  }
+  hex_preview[preview_len * 2] = '\0';
+  log_notice(LD_REND, "P2P data preview: %s%s", hex_preview, 
+             to_read > 32 ? "..." : "");
+  
+  /* Create a simple response for testing */
+  const char *response = "P2P_ACK:Message received\n";
+  connection_write_to_buf(response, strlen(response), TO_CONN(conn));
+  
+  /* For now, close after one message exchange */
+  log_notice(LD_REND, "P2P handler: Message processed, closing connection");
+  return HS_SERVICE_HANDLER_DONE;
+}
+
+/**
  * Register default built-in service handlers.
  */
 void
@@ -663,6 +727,8 @@ hs_builtin_service_add_default_handlers(void)
                                     time_server_handler);
   hs_register_builtin_service_handler(BUILTIN_HANDLER_AI_NODE,
                                     ai_node_handler);
+  hs_register_builtin_service_handler(BUILTIN_HANDLER_P2P_PROTOCOL,
+                                    p2p_protocol_handler);
   
   /* Map ports to handlers based on service type */
   if (service_type && strcmp(service_type, "time") == 0) {
@@ -670,7 +736,9 @@ hs_builtin_service_add_default_handlers(void)
     log_notice(LD_REND, "Registered TIME SERVER handler for port 80");
   } else if (service_type && strcmp(service_type, "ai") == 0) {
     hs_register_builtin_service_port(80, BUILTIN_HANDLER_AI_NODE);
+    hs_register_builtin_service_port(9999, BUILTIN_HANDLER_P2P_PROTOCOL);
     log_notice(LD_REND, "Registered AI NODE handler for port 80");
+    log_notice(LD_REND, "Registered P2P PROTOCOL handler for port 9999");
   } else {
     hs_register_builtin_service_port(80, BUILTIN_HANDLER_HELLO_WORLD);
     log_notice(LD_REND, "Registered STATIC FILE handler for port 80");
