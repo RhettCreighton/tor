@@ -251,6 +251,21 @@ time_server_handler(edge_connection_t *conn)
 {
   log_notice(LD_REND, "Processing time server request");
   
+  /* Check if this is an API request */
+  char request_data[512] = {0};
+  if (TO_CONN(conn)->inbuf) {
+    size_t request_len = connection_get_inbuf_len(TO_CONN(conn));
+    if (request_len > 0) {
+      size_t to_read = request_len > sizeof(request_data)-1 ? sizeof(request_data)-1 : request_len;
+      const char *head;
+      size_t len_out;
+      buf_pullup(TO_CONN(conn)->inbuf, to_read, &head, &len_out);
+      if (len_out >= to_read) {
+        memcpy(request_data, head, to_read);
+      }
+    }
+  }
+  
   /* Get current time */
   time_t now = time(NULL);
   struct tm *local_time = localtime(&now);
@@ -258,6 +273,50 @@ time_server_handler(edge_connection_t *conn)
   /* Format time string */
   char time_str[64];
   strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", local_time);
+  
+  /* Check if this is an API request */
+  if (strstr(request_data, "GET /api/time")) {
+    /* Create JSON response */
+    char json_content[512];
+    snprintf(json_content, sizeof(json_content),
+             "{\n"
+             "  \"server_time\": \"%s\",\n"
+             "  \"timestamp\": %ld,\n"
+             "  \"timezone\": \"UTC\",\n"
+             "  \"day_of_week\": \"%s\",\n"
+             "  \"uptime_seconds\": %ld\n"
+             "}",
+             time_str, (long)now, 
+             (local_time->tm_wday == 0) ? "Sunday" :
+             (local_time->tm_wday == 1) ? "Monday" :
+             (local_time->tm_wday == 2) ? "Tuesday" :
+             (local_time->tm_wday == 3) ? "Wednesday" :
+             (local_time->tm_wday == 4) ? "Thursday" :
+             (local_time->tm_wday == 5) ? "Friday" : "Saturday",
+             (long)now);
+    
+    /* Create JSON header */
+    char header[512];
+    snprintf(header, sizeof(header),
+             "HTTP/1.1 200 OK\r\n"
+             "Content-Type: application/json\r\n"
+             "Content-Length: %zu\r\n"
+             "Access-Control-Allow-Origin: *\r\n"
+             "Cache-Control: no-cache\r\n"
+             "Connection: close\r\n"
+             "\r\n", strlen(json_content));
+    
+    /* Send JSON response */
+    if (connection_edge_send_command(conn, RELAY_COMMAND_DATA,
+                                   header, strlen(header)) < 0 ||
+        connection_edge_send_command(conn, RELAY_COMMAND_DATA,
+                                   json_content, strlen(json_content)) < 0) {
+      return HS_SERVICE_HANDLER_ERROR;
+    }
+    
+    log_notice(LD_REND, "Sent JSON API response");
+    return HS_SERVICE_HANDLER_DONE;
+  }
   
   /* Create HTML response */
   char html_content[1024];
@@ -268,16 +327,24 @@ time_server_handler(edge_connection_t *conn)
            "  <title>Cheeseburger Time Server</title>\n"
            "  <meta http-equiv=\"refresh\" content=\"30\">\n"
            "  <style>\n"
-           "    body { font-family: Arial, sans-serif; text-align: center; margin-top: 100px; }\n"
-           "    .time { font-size: 48px; color: #333; margin: 20px; }\n"
-           "    .info { font-size: 18px; color: #666; }\n"
+           "    body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background: #f0f0f0; }\n"
+           "    .time { font-size: 48px; color: #333; margin: 20px; font-family: monospace; }\n"
+           "    .info { font-size: 18px; color: #666; margin: 10px; }\n"
+           "    .api-info { background: #fff; border: 1px solid #ddd; padding: 20px; margin: 20px auto; max-width: 600px; border-radius: 8px; }\n"
+           "    .api-endpoint { font-family: monospace; background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 4px; }\n"
+           "    h1 { color: #444; }\n"
            "  </style>\n"
            "</head>\n"
            "<body>\n"
            "  <h1>🍔 Cheeseburger Time Server</h1>\n"
            "  <div class=\"time\">%s</div>\n"
-           "  <div class=\"info\">Local time on the server</div>\n"
-           "  <div class=\"info\">Updates every 30 seconds</div>\n"
+           "  <div class=\"info\">Server Time (UTC)</div>\n"
+           "  <div class=\"info\">Page auto-refreshes every 30 seconds</div>\n"
+           "  <div class=\"api-info\">\n"
+           "    <h3>API Endpoint Available</h3>\n"
+           "    <div class=\"api-endpoint\">GET /api/time</div>\n"
+           "    <p>Returns JSON with server time, timestamp, and more</p>\n"
+           "  </div>\n"
            "</body>\n"
            "</html>",
            time_str);
