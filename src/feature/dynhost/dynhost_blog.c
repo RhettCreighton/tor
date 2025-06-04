@@ -97,6 +97,43 @@ static void comment_create_action(mvc_controller_t *ctrl, mvc_request_t *req,
 
 /** Helper functions */
 
+/** Escape HTML special characters to prevent XSS */
+static char *
+html_escape(const char *str)
+{
+  if (!str) return tor_strdup("");
+  
+  /* Count chars needing escape */
+  size_t len = 0;
+  for (const char *p = str; *p; p++) {
+    switch (*p) {
+      case '<': len += 4; break;  /* &lt; */
+      case '>': len += 4; break;  /* &gt; */
+      case '&': len += 5; break;  /* &amp; */
+      case '"': len += 6; break;  /* &quot; */
+      case '\'': len += 6; break; /* &#x27; */
+      default: len++; break;
+    }
+  }
+  
+  char *escaped = tor_malloc(len + 1);
+  char *out = escaped;
+  
+  for (const char *p = str; *p; p++) {
+    switch (*p) {
+      case '<': memcpy(out, "&lt;", 4); out += 4; break;
+      case '>': memcpy(out, "&gt;", 4); out += 4; break;
+      case '&': memcpy(out, "&amp;", 5); out += 5; break;
+      case '"': memcpy(out, "&quot;", 6); out += 6; break;
+      case '\'': memcpy(out, "&#x27;", 6); out += 6; break;
+      default: *out++ = *p; break;
+    }
+  }
+  *out = '\0';
+  
+  return escaped;
+}
+
 static char *
 format_time(time_t timestamp)
 {
@@ -141,6 +178,11 @@ blog_index_action(mvc_controller_t *ctrl, mvc_request_t *req,
       const char *id = strmap_get(post->attributes, "id");
       char *time_str = format_time(post->created_at);
       
+      /* Escape user content to prevent XSS */
+      char *title_escaped = html_escape(title);
+      char *author_escaped = html_escape(author);
+      char *content_escaped = html_escape(content);
+      
       char *post_html;
       tor_asprintf(&post_html,
         "<div class=\"post\">\n"
@@ -149,10 +191,13 @@ blog_index_action(mvc_controller_t *ctrl, mvc_request_t *req,
         "  <div class=\"post-content\">%s</div>\n"
         "  <a href=\"/blog/post/%s\">Read more and comment →</a>\n"
         "</div>\n",
-        id, title, author, time_str, content, id);
+        id, title_escaped, author_escaped, time_str, content_escaped, id);
       
       smartlist_add(content_parts, post_html);
       tor_free(time_str);
+      tor_free(title_escaped);
+      tor_free(author_escaped);
+      tor_free(content_escaped);
     } SMARTLIST_FOREACH_END(post);
   }
   
@@ -197,6 +242,11 @@ blog_show_action(mvc_controller_t *ctrl, mvc_request_t *req,
   const char *content = strmap_get(post->attributes, "content");
   char *time_str = format_time(post->created_at);
   
+  /* Escape user content */
+  char *title_escaped = html_escape(title);
+  char *author_escaped = html_escape(author);
+  char *content_escaped = html_escape(content);
+  
   smartlist_t *content_parts = smartlist_new();
   
   /* Post content */
@@ -207,9 +257,12 @@ blog_show_action(mvc_controller_t *ctrl, mvc_request_t *req,
     "  <div class=\"post-meta\">by %s on %s</div>\n"
     "  <div class=\"post-content\">%s</div>\n"
     "</div>\n",
-    title, author, time_str, content);
+    title_escaped, author_escaped, time_str, content_escaped);
   smartlist_add(content_parts, post_html);
   tor_free(time_str);
+  tor_free(title_escaped);
+  tor_free(author_escaped);
+  tor_free(content_escaped);
   
   /* Comments section */
   smartlist_add(content_parts, tor_strdup("<div class=\"comments\">\n"));
@@ -231,6 +284,10 @@ blog_show_action(mvc_controller_t *ctrl, mvc_request_t *req,
         const char *com_content = strmap_get(comment->attributes, "content");
         char *com_time = format_time(comment->created_at);
         
+        /* Escape user content */
+        char *com_author_escaped = html_escape(com_author);
+        char *com_content_escaped = html_escape(com_content);
+        
         char *comment_html;
         tor_asprintf(&comment_html,
           "<div class=\"comment\">\n"
@@ -238,10 +295,12 @@ blog_show_action(mvc_controller_t *ctrl, mvc_request_t *req,
           "  <div class=\"comment-time\">%s</div>\n"
           "  <p>%s</p>\n"
           "</div>\n",
-          com_author, com_time, com_content);
+          com_author_escaped, com_time, com_content_escaped);
         
         smartlist_add(content_parts, comment_html);
         tor_free(com_time);
+        tor_free(com_author_escaped);
+        tor_free(com_content_escaped);
       } SMARTLIST_FOREACH_END(comment);
     }
     
@@ -266,8 +325,11 @@ blog_show_action(mvc_controller_t *ctrl, mvc_request_t *req,
   SMARTLIST_FOREACH(content_parts, char *, part, tor_free(part));
   smartlist_free(content_parts);
   
-  char *html = render_layout(title, page_content);
+  /* Use escaped title for the page title */
+  char *title_escaped_again = html_escape(title);
+  char *html = render_layout(title_escaped_again, page_content);
   tor_free(page_content);
+  tor_free(title_escaped_again);
   
   mvc_response_set_body(resp, html);
   tor_free(html);

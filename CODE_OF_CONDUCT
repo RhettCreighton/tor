@@ -1,6 +1,41 @@
-The Tor Project is committed to fostering a inclusive community
-where people feel safe to engage, share their points of view, and
-participate. For the latest version of our Code of Conduct, please
-see
+# Code of Conduct
 
-https://community.torproject.org/policies/code_of_conduct/
+## Our Principles
+
+This project values:
+- **Free and open exchange of ideas** - We support First Amendment principles
+- **Technical merit above all** - The best code wins, regardless of who wrote it
+- **Constructive debate** - Disagreement is encouraged when it improves the code
+- **Privacy and anonymity** - Core values of the Tor project
+
+## Guidelines
+
+1. **Focus on the code, not the person**
+   - Critique implementations, not individuals
+   - Judge contributions by technical merit alone
+
+2. **Be direct and honest**
+   - Clear, direct feedback improves code quality
+   - Sugar-coating wastes everyone's time
+
+3. **Respect privacy**
+   - Don't dox or reveal personal information
+   - Pseudonymous contributions are welcome
+
+4. **Stay on topic**
+   - This is about building great software
+   - Political/personal disputes belong elsewhere
+
+## What We Don't Do
+
+- We don't police speech or thoughts
+- We don't require agreement on non-technical matters
+- We don't discriminate based on identity or beliefs
+- We don't prioritize feelings over code quality
+
+## Resolution
+
+Technical disputes: Resolved by code benchmarks, tests, and demonstrations
+Severe disruption: Temporary muting for spam or completely off-topic content only
+
+The goal is simple: **Build the best privacy software possible.**
