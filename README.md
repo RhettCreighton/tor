@@ -1,54 +1,54 @@
-Tor protects your privacy on the internet by hiding the connection between
-your Internet address and the services you use. We believe Tor is reasonably
-secure, but please ensure you read the instructions and configure it properly.
+# Tor with Dynamic Onion Host (Dynhost) Feature
 
-## Build
+This is Rhett Creighton's fork of Tor that includes the **Dynamic Onion Host (dynhost)** feature. 
+This feature enables Tor to host onion services internally without binding to any external ports, 
+with all service logic embedded directly in the Tor binary itself.
 
-To build Tor from source:
+Original Tor protects your privacy on the internet by hiding the connection between
+your Internet address and the services you use.
 
-```
-./configure
-make
-make install
-```
+## What Makes This Fork Special?
 
-To build Tor from a just-cloned git repository:
+The **dynhost** feature demonstrates that Tor can be more than just a privacy tool - it can be a platform for hosting services directly within the Tor binary. No external dependencies, no open ports, just pure onion-routed services.
 
-```
+## Quick Start
+
+### Build from source:
+
+```bash
+git clone git@github.com:RhettCreighton/tor.git
+cd tor
 ./autogen.sh
 ./configure
 make
-make install
 ```
 
-## Releases
+### Run Tor with dynhost:
 
-The tarballs, checksums and signatures can be found here: https://dist.torproject.org
+```bash
+./src/app/tor
+```
 
-- Checksum: `<tarball-name>.sha256sum`
-- Signatures: `<tarball-name>.sha256sum.asc`
+The dynhost service will automatically start and create an ephemeral .onion address.
+Look for this line in the output:
 
-### Schedule
+```
+[notice] Dynamic onion host ephemeral service created with address: [address].onion
+```
 
-You can find our release schedule here:
+### Access the dynhost service:
 
-- https://gitlab.torproject.org/tpo/core/team/-/wikis/NetworkTeam/CoreTorReleases
+Using curl through Tor's SOCKS proxy:
+```bash
+curl --socks5-hostname 127.0.0.1:9050 http://[address].onion/
+```
 
-### Keys that CAN sign a release
-
-The following keys are the maintainers of this repository. One or many of
-these keys can sign the releases, do NOT expect them all:
-
-- Alexander Færøy:
-    [514102454D0A87DB0767A1EBBE6A0531C18A9179](https://keys.openpgp.org/vks/v1/by-fingerprint/1C1BC007A9F607AA8152C040BEA7B180B1491921)
-- David Goulet:
-    [B74417EDDF22AC9F9E90F49142E86A2A11F48D36](https://keys.openpgp.org/vks/v1/by-fingerprint/B74417EDDF22AC9F9E90F49142E86A2A11F48D36)
-- Nick Mathewson:
-    [2133BC600AB133E1D826D173FE43009C4607B1FB](https://keys.openpgp.org/vks/v1/by-fingerprint/2133BC600AB133E1D826D173FE43009C4607B1FB)
+Or use Tor Browser and navigate directly to the .onion address.
 
 ## Development
 
-See our hacking documentation in [doc/HACKING/](./doc/HACKING).
+For Tor development documentation, see [doc/HACKING/](./doc/HACKING).
+For dynhost implementation details, see [CLAUDE.md](./CLAUDE.md).
 
 ## Dynamic Onion Host (Dynhost) Feature
 
@@ -89,24 +89,21 @@ Dynhost allows Tor to:
 
 For complete documentation about the dynhost implementation, see [CLAUDE.md](./CLAUDE.md).
 
+## Licensing
+
+This is a combined work:
+- Original Tor code: BSD 3-clause license (see [LICENSE](./LICENSE))
+- Dynhost additions: Apache 2.0 license (see [LICENSE.dynhost](./LICENSE.dynhost))
+
+See [NOTICE](./NOTICE) for full attribution.
+
+## Repository
+
+- **This Fork**: https://github.com/RhettCreighton/tor
+- **Original Tor**: https://gitlab.torproject.org/tpo/core/tor
+
 ## Resources
 
-Home page:
-
-- https://www.torproject.org/
-
-Download new versions:
-
-- https://www.torproject.org/download/tor
-
-How to verify Tor source:
-
-- https://support.torproject.org/little-t-tor/
-
-Documentation and Frequently Asked Questions:
-
-- https://support.torproject.org/
-
-How to run a Tor relay:
-
-- https://community.torproject.org/relay/ 
+For information about the original Tor project:
+- Home page: https://www.torproject.org/
+- Documentation: https://support.torproject.org/ 
