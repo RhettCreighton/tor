@@ -20,3 +20,7 @@ See [LICENSE-BSD](./LICENSE-BSD) for the full text.
 - New contributions to this fork should be Apache 2.0
 - We respect and maintain BSD 3-Clause for all original Tor code
 - Both licenses are permissive and compatible
+
+## Third-Party Components
+The `src/ext/` directory contains third-party libraries with their own licenses.
+See [THIRD-PARTY-LICENSES](./THIRD-PARTY-LICENSES) for details.

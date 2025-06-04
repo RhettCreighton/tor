@@ -1,0 +1,77 @@
+# Third-Party Licenses
+
+This file documents the licenses of third-party components included in this project.
+The main project is dual-licensed under Apache-2.0 (new work) and BSD-3-Clause (original Tor).
+
+## External Components in src/ext/
+
+### SipHash (csiphash.c, siphash.h)
+- License: MIT License
+- Copyright: 2012-2014 Jean-Philippe Aumasson, Daniel J. Bernstein
+- Location: src/ext/csiphash.c, src/ext/siphash.h
+
+### Equix
+- License: LGPL v3
+- Copyright: tevador
+- Location: src/ext/equix/
+
+### Curve25519-donna
+- License: Public Domain
+- Author: Google (Adam Langley)
+- Location: src/ext/curve25519_donna/
+
+### Ed25519-donna
+- License: Public Domain
+- Author: Andrew Moon
+- Location: src/ext/ed25519/donna/
+
+### Keccak-tiny
+- License: CC0 (Public Domain)
+- Author: David Leon Gil
+- Location: src/ext/keccak-tiny/
+
+### Trunnel
+- License: BSD-style
+- Copyright: 2014 The Tor Project, Inc.
+- Location: src/ext/trunnel/
+
+### strlcat/strlcpy
+- License: ISC License
+- Copyright: 1998 Todd C. Miller
+- Location: src/ext/strlcat.c, src/ext/strlcpy.c
+
+### OpenBSD malloc
+- License: ISC License
+- Copyright: 2008 Otto Moerbeek
+- Location: src/ext/OpenBSD_malloc_Linux.c
+
+### readpassphrase
+- License: ISC License
+- Copyright: 2000-2002 Todd C. Miller
+- Location: src/ext/readpassphrase.c
+
+### mulodi
+- License: Dual MIT/University of Illinois Open Source License
+- Copyright: 2009-2016 LLVM Team
+- Location: src/ext/mulodi/
+
+### ht.h (Hash table implementation)
+- License: 3-clause BSD
+- Copyright: 2002 Christopher Clark
+- Location: src/ext/ht.h
+
+### tinytest
+- License: 3-clause BSD
+- Copyright: 2009-2012 Nick Mathewson
+- Location: src/ext/tinytest.c, src/ext/tinytest.h
+
+### tor_queue.h
+- License: 3-clause BSD
+- Copyright: 1991, 1993 The Regents of the University of California
+- Location: src/ext/tor_queue.h
+
+## Summary
+
+These third-party components are used under their respective licenses, which are all
+compatible with the project's dual Apache-2.0/BSD-3-Clause licensing. The presence of
+these components does not change the licensing of the main project code.
