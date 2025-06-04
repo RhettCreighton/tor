@@ -1,0 +1,20 @@
+Tor with Dynamic Onion Host (dynhost) Feature
+==============================================
+
+This product includes software developed by The Tor Project, Inc.
+and its contributors (https://www.torproject.org/).
+
+Original Tor software is Copyright (c) 2001-2004, Roger Dingledine
+Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson
+Copyright (c) 2007-2019, The Tor Project, Inc.
+
+The Dynamic Onion Host (dynhost) feature is Copyright (c) 2025 Rhett Creighton
+and is licensed under the Apache License 2.0.
+
+COMBINED WORK NOTICE:
+This is a combined work containing:
+1. Original Tor code (BSD 3-clause license)
+2. Dynamic Onion Host feature additions (Apache 2.0 license)
+
+See LICENSE for the original Tor license.
+See LICENSE.dynhost for the Apache 2.0 license for dynhost additions.
