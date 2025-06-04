@@ -16,5 +16,6 @@ This is a combined work containing:
 1. Original Tor code (BSD 3-clause license)
 2. Dynamic Onion Host feature additions (Apache 2.0 license)
 
-See LICENSE for the original Tor license.
-See LICENSE.dynhost for the Apache 2.0 license for dynhost additions.
+See LICENSE-BSD-3-Clause for the BSD license.
+See LICENSE-Apache-2.0 for the Apache 2.0 license for dynhost additions.
+See LICENSE for the complete original Tor license with third-party components.

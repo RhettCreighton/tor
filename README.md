@@ -104,8 +104,8 @@ For complete documentation about the dynhost implementation, see [CLAUDE.md](./C
 ## Licensing
 
 This is a combined work:
-- Original Tor code: BSD 3-clause license (see [LICENSE](./LICENSE))
-- Dynhost additions: Apache 2.0 license (see [LICENSE.dynhost](./LICENSE.dynhost))
+- Original Tor code: BSD 3-clause license (see [LICENSE-BSD-3-Clause](./LICENSE-BSD-3-Clause))
+- Dynhost additions: Apache 2.0 license (see [LICENSE-Apache-2.0](./LICENSE-Apache-2.0))
 
 See [NOTICE](./NOTICE) for full attribution.
 
