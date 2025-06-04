@@ -86,6 +86,18 @@ Dynhost allows Tor to:
 - **Main Menu** (`/`) - Shows available demos
 - **Time Server** (`/time`) - Displays current time with auto-refresh
 - **Calculator** (`/calculator`) - Adds 100 to any number you enter
+- **MVC Blog** (`/blog`) - Full-featured blog application with posts and comments
+
+### NEW: MVC Framework
+
+The dynhost feature now includes a Rails-like MVC framework for building web applications:
+- Models with validations and relationships
+- Controllers with RESTful actions
+- Views with template rendering
+- Router with URL pattern matching
+- In-memory data storage
+
+The blog demo showcases the MVC framework capabilities.
 
 For complete documentation about the dynhost implementation, see [CLAUDE.md](./CLAUDE.md).
 

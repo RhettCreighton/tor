@@ -42,6 +42,9 @@ This document provides a comprehensive guide for implementing and understanding 
    
    # Calculator
    curl --socks5-hostname 127.0.0.1:9050 http://[address].onion/calculator
+   
+   # MVC Blog
+   curl --socks5-hostname 127.0.0.1:9050 http://[address].onion/blog
    ```
 
 ## How It Works
@@ -68,19 +71,43 @@ src/feature/dynhost/
 ├── dynhost_handlers.h     # Handler declarations
 ├── dynhost_message.c      # Message protocol (488-byte chunks)
 ├── dynhost_message.h      # Message structures
-├── dynhost_webserver.c    # Demo HTTP server with routing
+├── dynhost_webserver.c    # HTTP server with routing and MVC integration
 ├── dynhost_webserver.h    # Web server API
+├── dynhost_mvc.c          # MVC framework implementation
+├── dynhost_mvc.h          # MVC framework API
+├── dynhost_blog.c         # Blog application using MVC
+├── dynhost_blog.h         # Blog application API
 └── include.am             # Build integration
 ```
 
 ### Web Server Features
 
 The `dynhost_webserver.c` implements a full-featured HTTP server with:
-- **URL Routing**: Different handlers for `/`, `/time`, `/calculator`
+- **URL Routing**: Different handlers for `/`, `/time`, `/calculator`, `/blog/*`
 - **GET/POST Support**: Form handling with URL-encoded data parsing
+- **MVC Integration**: Blog app demonstrates full MVC architecture
 - **Error Pages**: 404 Not Found, 405 Method Not Allowed, 500 Internal Server Error
 - **Responsive Design**: Modern CSS styling for all pages
-- **Navigation**: Links between different demo pages
+- **Response Chunking**: Handles Tor's 498-byte relay cell limit
+
+### MVC Framework
+
+The `dynhost_mvc.c/h` provides a Rails-like MVC framework:
+- **Models**: Fields, validations (required, length, pattern, range, custom)
+- **Views**: Template rendering with helpers
+- **Controllers**: Action-based request handling with before/after hooks
+- **Router**: RESTful URL pattern matching and dispatching
+- **Relationships**: Has-many, belongs-to, has-one associations
+- **In-Memory Storage**: Data persists while Tor runs
+
+### Blog Application
+
+The `dynhost_blog.c/h` demonstrates the MVC framework:
+- **Post Model**: Title, author, content with validations
+- **Comment Model**: Associated with posts via foreign key
+- **RESTful Routes**: Index, show, new, create actions
+- **Full CRUD**: Create and read posts/comments
+- **Modern UI**: Responsive design with navigation
 
 ### Core Tor Modifications
 
@@ -175,8 +202,18 @@ if (conn->dynhost_active) {
 - **Solution**: Explicitly send CONNECTED for dynhost connections
 
 ### Pitfall 6: Data Fragmentation
-- **Issue**: HTTP requests split across multiple DATA cells
-- **Solution**: Implement reassembly buffer to accumulate complete requests
+- **Issue**: HTTP requests/responses split across multiple DATA cells
+- **Solution**: Implement reassembly buffer for requests, chunk responses to 498 bytes
+
+### Pitfall 7: Response Too Large
+- **Error**: `Tried to send a command 2 of length 2739 in a v0 cell`
+- **Cause**: Response exceeds relay cell size limit
+- **Solution**: Chunk responses into 498-byte segments
+
+### Pitfall 8: Double Free in strmap
+- **Error**: `free(): double free detected in tcache 2`
+- **Cause**: Freeing a pointer after strmap_set takes ownership
+- **Solution**: Don't free values passed to strmap_set
 
 ## Data Flow Analysis
 
@@ -226,6 +263,12 @@ The dynhost feature includes multiple demo applications:
 1. **Main Menu** (`/`) - Shows available demos
 2. **Time Server** (`/time`) - Displays current time with auto-refresh
 3. **Calculator** (`/calculator`) - Adds 100 to any number you enter
+4. **MVC Blog** (`/blog`) - Full-featured blog with posts and comments
+   - `/blog` - List all posts
+   - `/blog/new` - Create new post
+   - `/blog/post/[id]` - View post with comments
+   - POST to `/blog/create` - Submit new post
+   - POST to `/blog/post/[id]/comment` - Add comment
 
 ### Testing Examples
 
@@ -237,7 +280,12 @@ curl --socks5-hostname 127.0.0.1:9050 \
      -d "number=42" \
      http://[address].onion/calculator
 
-# Expected output: HTML page showing "100 + 42 = 142"
+# Test blog post creation
+curl --socks5-hostname 127.0.0.1:9050 \
+     -X POST \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -d "title=Hello%20World&author=Alice&content=My%20first%20post" \
+     http://[address].onion/blog/create
 ```
 
 ## Performance Characteristics

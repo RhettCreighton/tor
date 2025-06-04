@@ -17,6 +17,8 @@
 #include "lib/malloc/malloc.h"
 #include "lib/string/printf.h"
 #include "lib/string/util_string.h"
+#include "feature/dynhost/dynhost_mvc.h"
+#include "feature/dynhost/dynhost_blog.h"
 
 #include <time.h>
 
@@ -69,6 +71,11 @@ static const char MAIN_MENU_HTML[] =
   "      <h2>🧮 Calculator</h2>\n"
   "      <p>Add 100 to any number you enter</p>\n"
   "      <a href=\"/calculator\">Try Calculator</a>\n"
+  "    </div>\n"
+  "    <div class=\"demo-card\">\n"
+  "      <h2>📝 MVC Blog</h2>\n"
+  "      <p>Full-featured RESTful blog with posts and comments</p>\n"
+  "      <a href=\"/blog\">Visit Blog</a>\n"
   "    </div>\n"
   "  </div>\n"
   "  <div class=\"info\">\n"
@@ -353,6 +360,142 @@ dynhost_webserver_handle_request(edge_connection_t *conn,
       result = 0;
       goto done;
     }
+  } else if (strstr(path, "/blog") == path) {
+    // Handle blog routes through MVC framework
+    mvc_app_t *blog_app = dynhost_blog_get_app();
+    if (!blog_app) {
+      // Initialize blog app if not already done
+      dynhost_blog_init();
+      blog_app = dynhost_blog_get_app();
+    }
+    
+    if (blog_app) {
+      // Create MVC request from HTTP data
+      mvc_request_t *mvc_req = mvc_request_from_http((const char *)data, len, conn);
+      if (mvc_req) {
+        mvc_response_t *mvc_resp = NULL;
+        
+        // Handle dynamic routes for blog posts and comments
+        if (strstr(path, "/blog/post/") == path && strcmp(method, "GET") == 0) {
+          // Extract post ID from path like /blog/post/123
+          const char *id_start = path + strlen("/blog/post/");
+          char *id_str = tor_strdup(id_start);
+          strmap_set(mvc_req->params, "id", id_str);
+          
+          // Get the posts controller and call show action
+          mvc_controller_t *posts_ctrl = strmap_get(blog_app->controllers, "PostsController");
+          if (posts_ctrl) {
+            mvc_resp = mvc_response_new(200);
+            void (*show_action)(mvc_controller_t *, mvc_request_t *, mvc_response_t *);
+            show_action = strmap_get(posts_ctrl->actions, "show");
+            if (show_action) {
+              show_action(posts_ctrl, mvc_req, mvc_resp);
+            }
+          }
+        } else if (strstr(path, "/blog/post/") == path && 
+                   strstr(path, "/comment") && strcmp(method, "POST") == 0) {
+          // Extract post ID for comment creation
+          const char *id_start = path + strlen("/blog/post/");
+          const char *id_end = strstr(id_start, "/comment");
+          if (id_end) {
+            size_t id_len = id_end - id_start;
+            char *post_id = tor_malloc(id_len + 1);
+            memcpy(post_id, id_start, id_len);
+            post_id[id_len] = '\0';
+            strmap_set(mvc_req->params, "post_id", post_id);
+            
+            // Get the comments controller and call create action
+            mvc_controller_t *comments_ctrl = strmap_get(blog_app->controllers, "CommentsController");
+            if (comments_ctrl) {
+              mvc_resp = mvc_response_new(200);
+              void (*create_action)(mvc_controller_t *, mvc_request_t *, mvc_response_t *);
+              create_action = strmap_get(comments_ctrl->actions, "create");
+              if (create_action) {
+                create_action(comments_ctrl, mvc_req, mvc_resp);
+              }
+            }
+          }
+        } else {
+          // Use the router for standard routes
+          mvc_router_t *router = mvc_app_get_router(blog_app);
+          if (router) {
+            mvc_router_dispatch(router, mvc_req, &mvc_resp);
+          }
+        }
+        
+        // Convert MVC response to HTTP
+        if (mvc_resp) {
+          char *http_response = mvc_response_to_http(mvc_resp);
+          
+          // IMPORTANT: Send response in chunks (relay cells have 498 byte limit)
+          // Without chunking, large responses will trigger:
+          // "Tried to send a command 2 of length XXXX in a v0 cell"
+          size_t resp_len = strlen(http_response);
+          const char *ptr = http_response;
+          size_t remaining = resp_len;
+          
+          while (remaining > 0) {
+            size_t chunk_size = MIN(remaining, 498);
+            if (connection_edge_send_command(conn, RELAY_COMMAND_DATA,
+                                           ptr, chunk_size) < 0) {
+              log_warn(LD_REND, "Failed to send blog response data");
+              tor_free(http_response);
+              mvc_response_free(mvc_resp);
+              result = -1;
+              goto done;
+            }
+            ptr += chunk_size;
+            remaining -= chunk_size;
+          }
+          
+          tor_free(http_response);
+          mvc_response_free(mvc_resp);
+          
+          /* Send END cell to close the connection after response */
+          connection_edge_send_command(conn, RELAY_COMMAND_END,
+                                      (const char*)&(uint8_t){END_STREAM_REASON_DONE},
+                                      1);
+          result = 0;
+        }
+        
+        mvc_request_free(mvc_req);
+      }
+    }
+    
+    if (!response && result != 0) {
+      // If blog handling failed, return 500 error
+      const char *error_response = 
+        "HTTP/1.1 500 Internal Server Error\r\n"
+        "Content-Type: text/html\r\n"
+        "Content-Length: 38\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "<h1>500 Internal Server Error</h1>\n";
+      
+      // Send error response in chunks if needed
+      size_t err_len = strlen(error_response);
+      const char *ptr = error_response;
+      size_t remaining = err_len;
+      
+      while (remaining > 0) {
+        size_t chunk_size = MIN(remaining, 498);
+        if (connection_edge_send_command(conn, RELAY_COMMAND_DATA,
+                                       ptr, chunk_size) < 0) {
+          log_warn(LD_REND, "Failed to send error response");
+          result = -1;
+          goto done;
+        }
+        ptr += chunk_size;
+        remaining -= chunk_size;
+      }
+      
+      /* Send END cell to close the connection */
+      connection_edge_send_command(conn, RELAY_COMMAND_END,
+                                  (const char*)&(uint8_t){END_STREAM_REASON_DONE},
+                                  1);
+      result = 0;
+    }
+    goto done;
   } else {
     // 404 Not Found
     const char *not_found_html = 
