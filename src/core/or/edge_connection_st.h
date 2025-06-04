@@ -129,6 +129,13 @@ struct edge_connection_t {
    * an XON. Used to ensure that this edge keeps reads on its edge socket
    * disabled. */
   uint8_t xoff_received : 1;
+
+  /** Dynamic onion host fields */
+  struct dynhost_port_t *dynhost_port;  /**< Dynhost port config if applicable */
+  unsigned int dynhost_active : 1;       /**< True if this is a dynhost connection */
+  
+  /** Message reassembly buffer for dynhost */
+  struct buf_t *dynhost_reassembly_buf;  /**< Buffer for incomplete messages */
 };
 
 #endif /* !defined(EDGE_CONNECTION_ST_H) */

@@ -24,6 +24,7 @@
 #include "feature/hs/hs_ob.h"
 #include "feature/hs/hs_ident.h"
 #include "feature/hs/hs_service.h"
+#include "feature/dynhost/dynhost_handlers.h"
 #include "feature/hs_common/shared_random_client.h"
 #include "feature/nodelist/describe.h"
 #include "feature/nodelist/microdesc.h"
@@ -611,6 +612,7 @@ hs_set_conn_addr_port(const smartlist_t *ports, edge_connection_t *conn)
 
   tor_assert(ports);
   tor_assert(conn);
+
 
   matching_ports = smartlist_new();
   SMARTLIST_FOREACH_BEGIN(ports, hs_port_config_t *, p) {

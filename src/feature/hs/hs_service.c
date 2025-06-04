@@ -9,6 +9,7 @@
 #define HS_SERVICE_PRIVATE
 
 #include "core/or/or.h"
+#include "feature/dynhost/dynhost_handlers.h"
 #include "app/config/config.h"
 #include "app/config/statefile.h"
 #include "core/mainloop/connection.h"
@@ -4299,6 +4300,12 @@ hs_service_set_conn_addr_port(const origin_circuit_t *circ,
     /* Exceeding the limit makes tor silently ignore the stream creation
      * request and keep the circuit open. */
     goto err_no_close;
+  }
+
+  /* Check if this is a dynhost service that needs special handling */
+  if (dynhost_intercept_service_connection(service, conn)) {
+    /* Dynhost is handling this connection internally */
+    return 0;
   }
 
   /* Find a virtual port of that service matching the one in the connection if

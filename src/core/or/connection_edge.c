@@ -87,6 +87,7 @@
 #include "feature/control/control_events.h"
 #include "feature/dircache/dirserv.h"
 #include "feature/dircommon/directory.h"
+#include "feature/dynhost/dynhost_handlers.h"
 #include "feature/hibernate/hibernate.h"
 #include "feature/hs/hs_cache.h"
 #include "feature/hs/hs_circuit.h"
@@ -326,6 +327,11 @@ int
 connection_edge_process_inbuf(edge_connection_t *conn, int package_partial)
 {
   tor_assert(conn);
+
+  /* Check if this is a dynhost connection */
+  if (conn->dynhost_active) {
+    return dynhost_connection_handle_read(conn);
+  }
 
   switch (conn->base_.state) {
     case AP_CONN_STATE_SOCKS_WAIT:
@@ -3895,6 +3901,8 @@ handle_hs_exit_conn(circuit_t *circ, edge_connection_t *conn)
       hs_ident_edge_conn_new(&origin_circ->hs_ident->identity_pk);
     tor_assert(connection_edge_is_rendezvous_stream(conn));
     ret = hs_service_set_conn_addr_port(origin_circ, conn);
+    log_notice(LD_REND, "After hs_service_set_conn_addr_port: ret=%d, conn=%p, "
+               "dynhost_active=%d", ret, conn, conn->dynhost_active);
   } else {
     /* We should never get here if the circuit's purpose is rendezvous. */
     tor_assert_nonfatal_unreached();
@@ -3937,6 +3945,9 @@ handle_hs_exit_conn(circuit_t *circ, edge_connection_t *conn)
   origin_circ->p_streams = conn;
   conn->on_circuit = circ;
   assert_circuit_ok(circ);
+  
+  log_notice(LD_REND, "Stream %d attached to circuit %u, conn=%p, dynhost=%d",
+             conn->stream_id, circ->n_circ_id, conn, conn->dynhost_active);
 
   hs_inc_rdv_stream_counter(origin_circ);
 
@@ -4107,6 +4118,8 @@ connection_exit_begin_conn(const relay_msg_t *msg, circuit_t *circ)
   if (circ->purpose == CIRCUIT_PURPOSE_S_REND_JOINED) {
     int ret;
     tor_free(address);
+    log_notice(LD_REND, "BEGIN cell for HS: stream_id=%d, port=%d, conn=%p",
+               n_stream->stream_id, n_stream->base_.port, n_stream);
     /* We handle this circuit and stream in this function for all supported
      * hidden service version. */
     ret = handle_hs_exit_conn(circ, n_stream);
@@ -4357,6 +4370,36 @@ connection_exit_connect(edge_connection_t *edge_conn)
   connection_t *conn = TO_CONN(edge_conn);
   int socket_error = 0, result;
   const char *why_failed_exit_policy = NULL;
+
+  /* Check if this is a dynhost connection that we're handling internally */
+  if (edge_conn->dynhost_active) {
+    log_info(LD_EXIT, "Handling dynhost connection internally");
+    conn->state = EXIT_CONN_STATE_OPEN;
+    
+    /* For dynhost connections, we ALWAYS need to send CONNECTED cell,
+     * even for rendezvous streams, because we're simulating a successful
+     * connection to the virtual service */
+    connection_edge_send_command(edge_conn, RELAY_COMMAND_CONNECTED, 
+                                NULL, 0);
+    
+    /* Don't try to start reading on a fake connection - we'll handle data
+     * when it arrives through the circuit */
+    conn->read_event = NULL;
+    conn->write_event = NULL;
+    
+    /* Update stream count */
+    circuit_t *circ = circuit_get_by_edge_conn(edge_conn);
+    if (circ && circ->purpose == CIRCUIT_PURPOSE_S_REND_JOINED) {
+      /* Increment stream count for rate limiting */
+      origin_circuit_t *origin_circ = TO_ORIGIN_CIRCUIT(circ);
+      if (origin_circ->hs_ident) {
+        origin_circ->hs_ident->num_rdv_streams++;
+      }
+    }
+    
+    log_notice(LD_EXIT, "Dynhost connection ready to handle data, CONNECTED sent");
+    return;
+  }
 
   /* Apply exit policy to non-rendezvous connections. */
   if (! connection_edge_is_rendezvous_stream(edge_conn) &&

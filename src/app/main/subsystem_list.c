@@ -33,6 +33,7 @@
 #include "lib/evloop/evloop_sys.h"
 
 #include "feature/dirauth/dirauth_sys.h"
+#include "feature/dynhost/dynhost_sys.h"
 #include "feature/hs/hs_sys.h"
 #include "feature/metrics/metrics_sys.h"
 #include "feature/relay/relay_sys.h"
@@ -71,6 +72,7 @@ const subsys_fns_t *tor_subsystems[] = {
 
   &sys_relay,
   &sys_hs,
+  &sys_dynhost,
 
   &sys_btrack,
 

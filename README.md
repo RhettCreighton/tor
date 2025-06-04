@@ -50,6 +50,45 @@ these keys can sign the releases, do NOT expect them all:
 
 See our hacking documentation in [doc/HACKING/](./doc/HACKING).
 
+## Dynamic Onion Host (Dynhost) Feature
+
+This fork includes the **Dynamic Onion Host (dynhost)** feature, which enables Tor to host onion services internally without binding to any external ports. All service logic is embedded directly in the Tor binary itself.
+
+### What is Dynhost?
+
+Dynhost allows Tor to:
+- Host web services accessible only through .onion addresses
+- Run without any external web server or port bindings
+- Demonstrate fully self-contained onion services
+
+### Quick Start with Dynhost
+
+1. Build and run Tor:
+   ```bash
+   ./autogen.sh
+   ./configure
+   make
+   ./src/app/tor
+   ```
+
+2. Look for the onion address in the logs:
+   ```
+   [notice] Dynamic onion host ephemeral service created with address: [address].onion
+   ```
+
+3. Access the service using Tor Browser or curl:
+   ```bash
+   curl --socks5-hostname 127.0.0.1:9050 http://[address].onion/
+   ```
+
+### Available Demos
+
+- **Main Menu** (`/`) - Shows available demos
+- **Time Server** (`/time`) - Displays current time with auto-refresh
+- **Calculator** (`/calculator`) - Adds 100 to any number you enter
+
+For complete documentation about the dynhost implementation, see [CLAUDE.md](./CLAUDE.md).
+
 ## Resources
 
 Home page:

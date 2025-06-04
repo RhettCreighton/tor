@@ -69,6 +69,7 @@ include src/feature/dircache/include.am
 include src/feature/dirclient/include.am
 include src/feature/dircommon/include.am
 include src/feature/dirparse/include.am
+include src/feature/dynhost/include.am
 include src/feature/hibernate/include.am
 include src/feature/hs_common/include.am
 include src/feature/hs/include.am

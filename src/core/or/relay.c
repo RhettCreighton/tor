@@ -48,6 +48,7 @@
 #include "lib/log/log.h"
 #define RELAY_PRIVATE
 #include "core/or/or.h"
+#include "feature/dynhost/dynhost_handlers.h"
 #include "feature/client/addressmap.h"
 #include "lib/err/backtrace.h"
 #include "lib/buf/buffers.h"
@@ -1698,10 +1699,15 @@ handle_relay_msg(const relay_msg_t *msg, circuit_t *circ,
           }
         }
 
-        log_info(domain,"data cell dropped, unknown stream (streamid %d).",
-                 msg->stream_id);
+        log_notice(domain,"DATA cell dropped, unknown stream (streamid %d) on circ %u",
+                   msg->stream_id, circ->n_circ_id);
         return 0;
       }
+      
+      log_notice(domain,"DATA cell received for stream %d, conn %p, dynhost=%d, "
+                 "state=%d, circ=%u",
+                 msg->stream_id, conn, conn->dynhost_active,
+                 conn->base_.state, circ->n_circ_id);
 
       /* Update our stream-level deliver window that we just received a DATA
        * cell. Going below 0 means we have a protocol level error so the
@@ -1725,7 +1731,41 @@ handle_relay_msg(const relay_msg_t *msg, circuit_t *circ,
       }
 
       stats_n_data_bytes_received += msg->length;
-      connection_buf_add((char*) msg->body, msg->length, TO_CONN(conn));
+      
+      /* For dynhost connections, add data to input buffer instead of output buffer */
+      if (conn->dynhost_active) {
+        buf_add(TO_CONN(conn)->inbuf, (char*) msg->body, msg->length);
+      } else {
+        connection_buf_add((char*) msg->body, msg->length, TO_CONN(conn));
+      }
+      
+      /* Check if this is a dynhost connection that needs special handling */
+      if (conn->dynhost_active) {
+        log_notice(LD_EXIT, "Dynhost DATA cell received (stream %d, %d bytes)",
+                   msg->stream_id, msg->length);
+        
+        /* Process the data immediately instead of waiting for events */
+        int process_result = 0;
+        size_t inbuf_len = connection_get_inbuf_len(TO_CONN(conn));
+        log_notice(LD_EXIT, "Dynhost buffer has %zu bytes to process", inbuf_len);
+        
+        while (inbuf_len > 0 && process_result >= 0) {
+          process_result = dynhost_connection_handle_read(conn);
+          size_t new_len = connection_get_inbuf_len(TO_CONN(conn));
+          if (new_len >= inbuf_len) {
+            /* Buffer didn't shrink, break to avoid infinite loop */
+            log_warn(LD_EXIT, "Dynhost buffer not shrinking, breaking");
+            break;
+          }
+          inbuf_len = new_len;
+        }
+        
+        if (process_result < 0) {
+          log_warn(LD_EXIT, "Error handling dynhost data");
+          connection_edge_end_close(conn, END_STREAM_REASON_MISC);
+          return -END_CIRC_REASON_INTERNAL;
+        }
+      }
 
 #ifdef MEASUREMENTS_21206
       /* Count number of RELAY_DATA cells received on a linked directory

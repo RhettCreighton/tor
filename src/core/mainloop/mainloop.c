@@ -83,6 +83,7 @@
 #include "feature/hs/hs_cache.h"
 #include "feature/hs/hs_client.h"
 #include "feature/hs/hs_service.h"
+#include "feature/dynhost/dynhost.h"
 #include "feature/nodelist/microdesc.h"
 #include "feature/nodelist/networkstatus.h"
 #include "feature/nodelist/nodelist.h"
@@ -1720,6 +1721,11 @@ second_elapsed_callback(time_t now, const or_options_t *options)
     // TODO: refactor or rewrite?
     accounting_run_housekeeping(now);
   }
+  
+  /* Run dynhost scheduled events */
+  if (have_completed_a_circuit() && !net_is_disabled()) {
+    dynhost_run_scheduled_events(now);
+  }
 
   /* 3a. Every second, we examine pending circuits and prune the
    *    ones which have been pending for more than a few seconds.
@@ -2184,13 +2190,28 @@ hs_service_callback(time_t now, const or_options_t *options)
 
   /* We need to at least be able to build circuits and that we actually have
    * a working network. */
+  static int condition_logged = 0;
   if (!have_completed_a_circuit() || net_is_disabled() ||
       !networkstatus_get_reasonably_live_consensus(now,
                                          usable_consensus_flavor())) {
+    if (!condition_logged) {
+      log_info(LD_REND, "hs_service_callback conditions not met: circuit=%d, net_disabled=%d, consensus=%p",
+               have_completed_a_circuit(), net_is_disabled(),
+               networkstatus_get_reasonably_live_consensus(now, usable_consensus_flavor()));
+      condition_logged = 1;
+    }
     goto end;
   }
 
   hs_service_run_scheduled_events(now);
+  
+  /* Check if dynhost service needs activation */
+  static int dynhost_check_logged = 0;
+  if (!dynhost_check_logged) {
+    log_notice(LD_REND, "hs_service_callback running, calling dynhost_check_and_activate");
+    dynhost_check_logged = 1;
+  }
+  dynhost_check_and_activate();
 
  end:
   /* Every 1 second. */
