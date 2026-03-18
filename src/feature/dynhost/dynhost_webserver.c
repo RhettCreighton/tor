@@ -270,6 +270,22 @@ parse_form_field(const char *data, const char *field_name, char *out, size_t out
   return 0;
 }
 
+/* External request handler — set by the embedding application (e.g. zclassic23).
+ * When set, all requests are routed here instead of built-in demos.
+ * Signature: handler(method, path, body, body_len, response_buf, response_max, ctx) → bytes written */
+typedef size_t (*dynhost_external_handler_fn)(const char *method, const char *path,
+                                              const uint8_t *body, size_t body_len,
+                                              uint8_t *response, size_t response_max,
+                                              void *ctx);
+static dynhost_external_handler_fn g_external_handler = NULL;
+static void *g_external_handler_ctx = NULL;
+
+void dynhost_webserver_set_external_handler(dynhost_external_handler_fn handler, void *ctx)
+{
+  g_external_handler = handler;
+  g_external_handler_ctx = ctx;
+}
+
 /** Handle HTTP request and generate response */
 int
 dynhost_webserver_handle_request(edge_connection_t *conn,
@@ -279,18 +295,56 @@ dynhost_webserver_handle_request(edge_connection_t *conn,
   char *path = NULL;
   char *response = NULL;
   int result = -1;
-  
+
   log_notice(LD_REND, "Webserver received request of %zu bytes", len);
-  log_notice(LD_REND, "First 100 chars: %.100s", (const char *)data);
-  
+
   // Parse HTTP request
   if (parse_http_request((const char *)data, len, &method, &path) < 0) {
     log_warn(LD_REND, "Failed to parse HTTP request");
     goto done;
   }
-  
+
   log_notice(LD_REND, "HTTP %s %s", method, path);
-  
+
+  /* External handler takes priority — "Don't Make Me Think" routing.
+   * The embedding app (zclassic23) handles store, blog, directory, etc. */
+  if (g_external_handler) {
+    /* Extract POST body if present */
+    const uint8_t *body = NULL;
+    size_t body_len = 0;
+    const char *body_start = tor_memmem(data, len, "\r\n\r\n", 4);
+    if (body_start) {
+      body_start += 4;
+      body = (const uint8_t *)body_start;
+      body_len = len - (size_t)(body_start - (const char *)data);
+    }
+
+    uint8_t *resp_buf = tor_malloc(65536);
+    size_t resp_len = g_external_handler(method, path, body, body_len,
+                                          resp_buf, 65536,
+                                          g_external_handler_ctx);
+    if (resp_len > 0) {
+      /* Send response back through Tor circuit in chunks */
+      size_t sent = 0;
+      while (sent < resp_len) {
+        size_t chunk = resp_len - sent;
+        if (chunk > 498) chunk = 498;
+        connection_edge_send_command(conn, RELAY_COMMAND_DATA,
+                                    (const char *)resp_buf + sent, chunk);
+        sent += chunk;
+      }
+      /* Send END to signal response complete */
+      connection_edge_send_command(conn, RELAY_COMMAND_END,
+                                  NULL, 0);
+      tor_free(resp_buf);
+      tor_free(method);
+      tor_free(path);
+      return 0;
+    }
+    tor_free(resp_buf);
+    /* External handler returned 0 — fall through to built-in routes */
+  }
+
   // Route based on path
   if (strcmp(path, "/") == 0 && strcmp(method, "GET") == 0) {
     // Show main menu
