@@ -73,4 +73,10 @@ uint32_t dynhost_generate_msg_id(void);
 uint32_t dynhost_crc32(const uint8_t *data, size_t len);
 dynhost_service_t *dynhost_get_global_service(void);
 
+/* Vanity .onion address: set a prefix before activation.
+ * The service will brute-force key generation until the .onion
+ * address starts with this prefix (base32, lowercase).
+ * 3 chars ≈ instant, 4 chars ≈ seconds, 5 chars ≈ minutes. */
+void dynhost_set_vanity_prefix(const char *prefix);
+
 #endif /* !defined(TOR_FEATURE_DYNHOST_DYNHOST_H) */

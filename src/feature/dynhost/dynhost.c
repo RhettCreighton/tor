@@ -145,6 +145,54 @@ dynhost_configure(const struct or_options_t *options)
   return 0;
 }
 
+/* ── Vanity .onion address support ────────────────────────── */
+
+static char g_vanity_prefix[16] = "";
+
+void dynhost_set_vanity_prefix(const char *prefix)
+{
+  if (prefix && strlen(prefix) < sizeof(g_vanity_prefix))
+    strlcpy(g_vanity_prefix, prefix, sizeof(g_vanity_prefix));
+}
+
+/* Generate a keypair, optionally matching a vanity prefix.
+ * The .onion address is base32(pubkey || checksum || version).
+ * Returns 0 on success, -1 on failure. */
+static int
+generate_key_with_prefix(ed25519_keypair_t *kp_out, const char *prefix)
+{
+  char onion_addr[HS_SERVICE_ADDR_LEN_BASE32 + 1];
+  uint64_t attempts = 0;
+  size_t prefix_len = prefix ? strlen(prefix) : 0;
+
+  /* Convert prefix to lowercase for comparison (base32 is lowercase) */
+  char lower_prefix[16] = "";
+  for (size_t i = 0; i < prefix_len && i < 15; i++)
+    lower_prefix[i] = (prefix[i] >= 'A' && prefix[i] <= 'Z')
+                       ? (char)(prefix[i] + 32) : prefix[i];
+  lower_prefix[prefix_len < 15 ? prefix_len : 15] = '\0';
+
+  while (1) {
+    if (ed25519_keypair_generate(kp_out, 0) < 0)
+      return -1;
+
+    if (prefix_len == 0)
+      return 0; /* No vanity prefix — accept any key */
+
+    hs_build_address(&kp_out->pubkey, HS_VERSION_THREE, onion_addr);
+    if (strncmp(onion_addr, lower_prefix, prefix_len) == 0) {
+      log_notice(LD_REND, "Vanity address found after %llu attempts: %s.onion",
+                 (unsigned long long)attempts, onion_addr);
+      return 0;
+    }
+
+    attempts++;
+    if (attempts % 100000 == 0)
+      log_notice(LD_REND, "Vanity search: %llu attempts...",
+                 (unsigned long long)attempts);
+  }
+}
+
 /**
  * Activate the dynamic onion host service.
  * This should be called after all subsystems are fully initialized.
@@ -156,18 +204,21 @@ dynhost_activate_service(void)
     log_warn(LD_BUG, "Dynhost not initialized");
     return -1;
   }
-  
+
   if (global_dynhost_service->hs_service) {
     log_info(LD_REND, "Dynhost service already activated");
     return 0;
   }
-  
+
   log_notice(LD_REND, "Activating dynhost ephemeral service");
-  
+
   // Create ephemeral service using the HS subsystem API
   ed25519_secret_key_t *sk = tor_malloc_zero(sizeof(ed25519_secret_key_t));
   ed25519_keypair_t kp;
-  if (ed25519_keypair_generate(&kp, 0) < 0) {
+  const char *prefix = g_vanity_prefix[0] ? g_vanity_prefix : NULL;
+  if (prefix)
+    log_notice(LD_REND, "Searching for vanity prefix: %s", prefix);
+  if (generate_key_with_prefix(&kp, prefix) < 0) {
     log_err(LD_REND, "Failed to generate dynhost service keys");
     tor_free(sk);
     return -1;
