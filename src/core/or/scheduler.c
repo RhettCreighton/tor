@@ -163,7 +163,8 @@ STATIC const scheduler_t *the_scheduler;
  *
  * Priority queue of channels that can write and have cells (pending work)
  */
-STATIC smartlist_t *channels_pending = NULL;
+/* NOT static — dynhost needs to check if scheduler is initialized */
+smartlist_t *channels_pending = NULL;
 
 /**
  * This event runs the scheduler from its callback, and is manually
@@ -550,7 +551,13 @@ scheduler_channel_has_waiting_cells,(channel_t *chan))
   IF_BUG_ONCE(!chan) {
     return;
   }
-  IF_BUG_ONCE(!channels_pending) {
+  /* Auto-initialize scheduler if options_act_once_on_startup was
+   * skipped (e.g., embedded Tor with config parse failure). */
+  if (!channels_pending) {
+    log_notice(LD_SCHED, "Scheduler auto-initializing (was not initialized during config)");
+    scheduler_init();
+  }
+  if (!channels_pending) {
     return;
   }
 

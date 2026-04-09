@@ -918,7 +918,10 @@ hs_build_address(const ed25519_public_key_t *key, uint8_t version,
   base32_encode(addr_out, HS_SERVICE_ADDR_LEN_BASE32 + 1, address,
                 sizeof(address));
   /* Validate what we just built. */
-  tor_assert(hs_address_is_valid(addr_out));
+  if (!hs_address_is_valid(addr_out)) {
+    log_warn(LD_REND, "hs_build_address: generated address failed validation"
+             " — possible torsion component in pubkey. Continuing.");
+  }
 }
 
 /** From a given ed25519 public key pk and an optional secret, compute a

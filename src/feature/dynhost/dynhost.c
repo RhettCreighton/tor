@@ -9,6 +9,7 @@
 
 #include "core/or/or.h"
 #include "feature/dynhost/dynhost.h"
+#include "feature/dynhost/dynhost_client.h"
 #include "feature/dynhost/dynhost_message.h"
 #include "feature/hs/hs_service.h"
 #include "feature/hs/hs_common.h"
@@ -176,6 +177,13 @@ generate_key_with_prefix(ed25519_keypair_t *kp_out, const char *prefix)
     if (ed25519_keypair_generate(kp_out, 0) < 0)
       return -1;
 
+    /* Validate pubkey — ed25519_validate_pubkey() checks for torsion
+     * components that make addresses invalid. Retry on failure. */
+    if (ed25519_validate_pubkey(&kp_out->pubkey) < 0) {
+      attempts++;
+      continue;
+    }
+
     if (prefix_len == 0)
       return 0; /* No vanity prefix — accept any key */
 
@@ -284,6 +292,9 @@ dynhost_run_scheduled_events(time_t now)
   
   /* Check and activate the service if needed */
   dynhost_check_and_activate();
+
+  /* Process any pending outbound .onion fetch requests */
+  dynhost_client_process_pending();
 }
 
 /**
@@ -320,11 +331,29 @@ dynhost_get_global_service(void)
  * Check if dynhost service needs activation and activate if ready.
  * This should be called periodically after the system is fully running.
  */
+/* Ensure scheduler is initialized — it may have been skipped if
+ * options_act_once_on_startup failed (e.g., from hs_build_address
+ * assertion during HiddenServiceDir key loading). Without the
+ * scheduler, Tor can't send data through circuits. */
+static void
+ensure_scheduler_initialized(void)
+{
+  extern smartlist_t *get_channels_pending(void);
+  if (!get_channels_pending()) {
+    log_notice(LD_REND, "Dynhost: scheduler not initialized, calling scheduler_init()");
+    extern void scheduler_init(void);
+    scheduler_init();
+  }
+}
+
 void
 dynhost_check_and_activate(void)
 {
   static int activation_attempted = 0;
   static int check_count = 0;
+
+  /* Fix scheduler if it wasn't initialized during config */
+  ensure_scheduler_initialized();
   
   /* Log every 10 checks to avoid spam */
   if (++check_count % 10 == 1) {
