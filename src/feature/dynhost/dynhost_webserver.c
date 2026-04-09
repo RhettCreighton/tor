@@ -18,7 +18,9 @@
 #include "lib/string/printf.h"
 #include "lib/string/util_string.h"
 #include "feature/dynhost/dynhost_mvc.h"
-#include "feature/dynhost/dynhost_blog.h"
+/* dynhost_blog excluded from embedded builds (SLP symbol conflicts).
+ * Blog demo only used by built-in webserver, not external handler. */
+/* #include "feature/dynhost/dynhost_blog.h" */
 
 #include <time.h>
 
@@ -415,18 +417,13 @@ dynhost_webserver_handle_request(edge_connection_t *conn,
       goto done;
     }
   } else if (strstr(path, "/blog") == path) {
-    // Handle blog routes through MVC framework
-    mvc_app_t *blog_app = dynhost_blog_get_app();
-    if (!blog_app) {
-      // Initialize blog app if not already done
-      dynhost_blog_init();
-      blog_app = dynhost_blog_get_app();
-    }
-    
-    if (blog_app) {
-      // Create MVC request from HTTP data
-      mvc_request_t *mvc_req = mvc_request_from_http((const char *)data, len, conn);
-      if (mvc_req) {
+    /* Blog demo disabled in embedded builds (SLP symbol conflicts).
+     * External handler serves /blog routes instead. */
+#ifdef DYNHOST_BLOG_ENABLED
+    {
+      mvc_request_t *mvc_req = NULL;
+      mvc_app_t *blog_app = NULL;
+      if (0) {
         mvc_response_t *mvc_resp = NULL;
         
         // Handle dynamic routes for blog posts and comments
@@ -549,6 +546,7 @@ dynhost_webserver_handle_request(edge_connection_t *conn,
                                   1);
       result = 0;
     }
+#endif /* DYNHOST_BLOG_ENABLED */
     goto done;
   } else {
     // 404 Not Found
