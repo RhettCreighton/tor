@@ -41,9 +41,16 @@ typedef struct dynhost_fetch_request_t {
   struct dynhost_fetch_request_t *next;
 } dynhost_fetch_request_t;
 
-/* Active fetch: a request that has been initiated (connection created) */
+/* Active fetch: a request that has been initiated (connection created).
+ *
+ * We hold a WEAK reference to our side of the linked pair via its
+ * global_identifier, never a raw pointer. Tor owns the connection's
+ * lifetime and may close+free it from its own event loop between our
+ * ticks; a raw dir_connection_t* would dangle and a later deref
+ * (buf_datalen on a freed inbuf) would crash. Resolve the id with
+ * connection_get_by_global_id() before every use — NULL means gone. */
 typedef struct dynhost_active_fetch_t {
-  dir_connection_t *dir_conn;     /* our side of the linked pair */
+  uint64_t conn_gid;              /* weak ref to our side of the linked pair */
   dynhost_client_callback_fn callback;
   void *ctx;
   time_t deadline;
@@ -185,7 +192,7 @@ initiate_fetch(dynhost_fetch_request_t *req)
 
   /* Track as active fetch */
   dynhost_active_fetch_t *active = tor_malloc_zero(sizeof(*active));
-  active->dir_conn = dir_conn;
+  active->conn_gid = TO_CONN(dir_conn)->global_identifier;
   active->callback = req->callback;
   active->ctx = req->ctx;
   active->deadline = req->deadline;
@@ -234,7 +241,17 @@ check_active_fetches(time_t now)
 
   while (*pp) {
     dynhost_active_fetch_t *af = *pp;
-    connection_t *conn = TO_CONN(af->dir_conn);
+    /* Resolve the connection by global id every tick. Tor owns its
+     * lifetime and may have closed+freed it from its own event loop
+     * since the previous tick; a raw pointer would dangle. NULL means
+     * it is already gone — report failure and drop the fetch. */
+    connection_t *conn = connection_get_by_global_id(af->conn_gid);
+    if (!conn) {
+      af->callback(-1, NULL, 0, af->ctx);
+      *pp = af->next;
+      tor_free(af);
+      continue;
+    }
 
     /* Check timeout */
     if (now >= af->deadline) {
@@ -344,8 +361,10 @@ dynhost_client_cleanup(void)
   while (a) {
     dynhost_active_fetch_t *next = a->next;
     a->callback(-1, NULL, 0, a->ctx);
-    if (!TO_CONN(a->dir_conn)->marked_for_close)
-      connection_mark_for_close(TO_CONN(a->dir_conn));
+    /* Resolve by global id — Tor may already have freed the conn. */
+    connection_t *conn = connection_get_by_global_id(a->conn_gid);
+    if (conn && !conn->marked_for_close)
+      connection_mark_for_close(conn);
     tor_free(a);
     a = next;
   }
