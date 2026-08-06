@@ -2146,7 +2146,7 @@ sigsys_debugging(int nr, siginfo_t *info, void *void_context)
 
   (void) nr;
 
-  if (info->si_code != SYS_SECCOMP)
+  if (info->si_code != TOR_SIGSYS_SECCOMP_CODE)
     return;
 
   if (!ctx)

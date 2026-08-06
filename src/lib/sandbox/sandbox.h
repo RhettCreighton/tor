@@ -15,15 +15,14 @@
 #include "orconfig.h"
 #include "lib/cc/torint.h"
 
-#ifndef SYS_SECCOMP
-
 /**
  * Used by SIGSYS signal handler to check if the signal was issued due to a
- * seccomp2 filter violation.
+ * seccomp2 filter violation.  Keep this fallback in Tor's namespace: recent
+ * glibc exposes SYS_SECCOMP as an enum member in <signal.h>, so defining a
+ * preprocessor macro with that name before the system header is parsed turns
+ * the enum declaration into invalid C.
  */
-#define SYS_SECCOMP 1
-
-#endif /* !defined(SYS_SECCOMP) */
+#define TOR_SIGSYS_SECCOMP_CODE 1
 
 #if defined(HAVE_SECCOMP_H) && defined(__linux__)
 #define USE_LIBSECCOMP
