@@ -34,7 +34,9 @@
 typedef struct dynhost_fetch_request_t {
   char onion_address[128];
   uint16_t port;
-  char path[256];
+  /* Must hold the longest application path: the zclassic23 market chunk
+   * path is /market/chunk/<412 hex chars>?slice=N — 434 bytes. */
+  char path[512];
   dynhost_client_callback_fn callback;
   void *ctx;
   time_t deadline;
@@ -155,7 +157,14 @@ initiate_fetch(dynhost_fetch_request_t *req)
   tor_addr_from_ipv4h(&dir_conn->base_.addr, 0x7f000001); /* dummy */
   dir_conn->base_.port = req->port;
   dir_conn->base_.address = tor_strdup(req->onion_address);
-  dir_conn->base_.purpose = DIR_PURPOSE_FETCH_CONSENSUS;
+  /* The response carries application data, not directory data. It MUST
+   * have its own purpose: connection_dir_client_reached_eof() dispatches
+   * on base_.purpose, and masquerading as DIR_PURPOSE_FETCH_CONSENSUS
+   * routes the reply into handle_response_fetch_consensus(), which calls
+   * networkstatus_consensus_download_failed(status, flavname=NULL) on any
+   * non-200 — a NULL-deref crash — and would try to install a 200 reply
+   * as the current consensus. */
+  dir_conn->base_.purpose = DIR_PURPOSE_DYNHOST_FETCH;
   dir_conn->base_.state = DIR_CONN_STATE_CONNECTING;
 
   /* Create the linked AP connection through Tor's circuit machinery.
@@ -180,6 +189,36 @@ initiate_fetch(dynhost_fetch_request_t *req)
   if (connection_add(TO_CONN(dir_conn)) < 0) {
     log_warn(LD_REND, "Dynhost client: connection_add failed");
     connection_free_(TO_CONN(dir_conn));
+    return -1;
+  }
+
+  /* A linked AP conn made this way never passes through a SOCKS listener,
+   * so nothing else parses its ".onion" hostname into the rendezvous
+   * machinery: left alone, hs_ident stays NULL and
+   * connection_ap_handshake_attach_circuit() treats the stream as a
+   * GENERAL exit stream — the exit then fails to DNS-resolve the .onion
+   * and the stream dies after MAX_RESOLVE_FAILURES (the RESOLVEFAILED
+   * "giving up" signature). Real SOCKS listeners get onion_traffic=1 from
+   * their port defaults; an internal conn must opt in explicitly, then run
+   * the same rewrite-and-attach the SOCKS handshake runs: it parses the
+   * v3 hostname, sets hs_ident, and parks the stream in RENDDESC_WAIT
+   * behind the descriptor fetch (or attaches immediately when the
+   * descriptor is cached). */
+  linked_conn->entry_cfg.onion_traffic = 1;
+  /* connection_ap_make_link() has ALREADY marked this conn pending
+   * (connection_edge.c:3518), but the rewrite-and-attach path owns the
+   * pending bookkeeping from here exactly as it does for a SOCKS conn
+   * that was never marked: the no-cached-descriptor branch unmarks and
+   * parks in RENDDESC_WAIT, the cached-descriptor branch re-marks before
+   * attaching. Leave the make_link mark in place and the cached branch
+   * marks a second time ("Bug: pending_entry_connections already
+   * contains ..." on every warm fetch). Undo it first. */
+  connection_ap_mark_as_non_pending_circuit(linked_conn);
+  if (connection_ap_rewrite_and_attach_if_allowed(linked_conn, NULL,
+                                                  NULL) < 0) {
+    log_warn(LD_REND, "Dynhost client: onion rewrite/attach refused for %s",
+             req->onion_address);
+    connection_mark_for_close(TO_CONN(dir_conn));
     return -1;
   }
 
@@ -303,6 +342,49 @@ check_active_fetches(time_t now)
 
     pp = &(*pp)->next;
   }
+}
+
+/* ── Response delivery (Tor event loop, via dirclient EOF) ─── */
+
+/**
+ * Called from connection_dir_client_reached_eof() when a
+ * DIR_PURPOSE_DYNHOST_FETCH connection reaches EOF with a fully-parsed
+ * HTTP response. Match the connection to its active fetch by global id,
+ * fire the fetch's callback exactly once, and drop the fetch from the
+ * active list. The unlink is the double-callback guard: afterwards
+ * check_active_fetches() never sees the fetch, so its marked-for-close /
+ * conn-gone failure paths cannot fire the callback a second time.
+ */
+int
+dynhost_client_handle_response(struct dir_connection_t *dir_conn,
+                               int status,
+                               const char *body,
+                               size_t body_len)
+{
+  if (!g_mutex_initialized)
+    return 0;
+
+  uint64_t gid = TO_CONN(dir_conn)->global_identifier;
+  dynhost_active_fetch_t **pp = &g_active_head;
+  while (*pp) {
+    dynhost_active_fetch_t *af = *pp;
+    if (af->conn_gid == gid) {
+      log_notice(LD_REND,
+                 "Dynhost client: fetch completed, status %d, %"
+                 TOR_PRIuSZ " body bytes", status, body_len);
+      af->callback(status, (const uint8_t *)body, body_len, af->ctx);
+      *pp = af->next;
+      tor_free(af);
+      return 0;
+    }
+    pp = &(*pp)->next;
+  }
+
+  /* No active fetch: the fetch already timed out and its callback was
+   * fired with -1. Nothing to do — the caller closes the connection. */
+  log_info(LD_REND, "Dynhost client: response for unknown/timed-out "
+           "connection (gid %llu), ignoring", (unsigned long long)gid);
+  return 0;
 }
 
 /* ── Process pending requests (Tor event loop) ─────────────── */

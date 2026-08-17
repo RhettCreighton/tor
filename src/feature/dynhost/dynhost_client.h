@@ -72,4 +72,21 @@ void dynhost_client_process_pending(void);
  */
 void dynhost_client_cleanup(void);
 
+struct dir_connection_t;
+/**
+ * Deliver a completed HTTP response to the matching active fetch.
+ * Called from dirclient.c's response dispatch for connections whose
+ * purpose is DIR_PURPOSE_DYNHOST_FETCH. Tor main thread only.
+ *
+ * @param conn       The dynhost fetch's dir_connection (EOF reached)
+ * @param status     Parsed HTTP status code
+ * @param body       Decompressed response body (owned by caller)
+ * @param body_len   Length of response body
+ * @return 0 always (the connection is closed by the caller regardless)
+ */
+int dynhost_client_handle_response(struct dir_connection_t *conn,
+                                   int status,
+                                   const char *body,
+                                   size_t body_len);
+
 #endif /* TOR_FEATURE_DYNHOST_DYNHOST_CLIENT_H */

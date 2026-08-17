@@ -2190,18 +2190,26 @@ hs_service_callback(time_t now, const or_options_t *options)
 
   /* We need to at least be able to build circuits and that we actually have
    * a working network. */
-  static int condition_logged = 0;
-  if (!have_completed_a_circuit() || net_is_disabled() ||
-      !networkstatus_get_reasonably_live_consensus(now,
-                                         usable_consensus_flavor())) {
-    if (!condition_logged) {
-      log_info(LD_REND, "hs_service_callback conditions not met: circuit=%d, net_disabled=%d, consensus=%p",
-               have_completed_a_circuit(), net_is_disabled(),
-               networkstatus_get_reasonably_live_consensus(now, usable_consensus_flavor()));
-      condition_logged = 1;
-    }
-    goto end;
+  static int last_conditions_ok = -1; /* -1: not yet logged */
+  const int circuit_ok = have_completed_a_circuit();
+  const int net_disabled = net_is_disabled();
+  const networkstatus_t *consensus =
+    networkstatus_get_reasonably_live_consensus(now, usable_consensus_flavor());
+  const int conditions_ok = circuit_ok && !net_disabled && consensus != NULL;
+  if (conditions_ok != last_conditions_ok) {
+    /* Edge-triggered (fires on every transition, silent while steady):
+     * during bootstrap the gate legitimately starts closed, so a one-shot
+     * "not met" line tells us nothing — what matters is whether it ever
+     * OPENS, and whether it closes again after opening. */
+    log_notice(LD_REND,
+               "hs_service_callback conditions %s: circuit=%d, "
+               "net_disabled=%d, consensus=%p",
+               conditions_ok ? "now met" : "not met",
+               circuit_ok, net_disabled, (const void *)consensus);
+    last_conditions_ok = conditions_ok;
   }
+  if (!conditions_ok)
+    goto end;
 
   hs_service_run_scheduled_events(now);
   

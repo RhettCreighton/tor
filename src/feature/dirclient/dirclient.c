@@ -25,6 +25,7 @@
 #include "feature/dirauth/dirvote.h"
 #include "feature/dirauth/shared_random.h"
 #include "feature/dircache/dirserv.h"
+#include "feature/dynhost/dynhost_client.h"
 #include "feature/dirclient/dirclient.h"
 #include "feature/dirclient/dirclient_modes.h"
 #include "feature/dirclient/dlstatus.h"
@@ -122,6 +123,8 @@ dir_conn_purpose_to_string(int purpose)
       return "hidden-service descriptor upload";
     case DIR_PURPOSE_FETCH_MICRODESC:
       return "microdescriptor fetch";
+    case DIR_PURPOSE_DYNHOST_FETCH:
+      return "dynhost application fetch";
     }
 
   log_warn(LD_BUG, "Called with unknown purpose %d", purpose);
@@ -2203,6 +2206,12 @@ connection_dir_client_reached_eof(dir_connection_t *conn)
       break;
     case DIR_PURPOSE_FETCH_HSDESC:
       rv = handle_response_fetch_hsdesc_v3(conn, &args);
+      break;
+    case DIR_PURPOSE_DYNHOST_FETCH:
+      /* Application data for the dynhost client, not directory data:
+       * hand the raw body to the fetch's callback. */
+      rv = dynhost_client_handle_response(conn, args.status_code,
+                                          args.body, args.body_len);
       break;
     default:
       tor_assert_nonfatal_unreached();

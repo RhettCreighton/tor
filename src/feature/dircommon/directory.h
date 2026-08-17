@@ -70,7 +70,12 @@ const dir_connection_t *CONST_TO_DIR_CONN(const connection_t *c);
 /** A connection to a directory server: set after a hidden service descriptor
  * is downloaded. */
 #define DIR_PURPOSE_HAS_FETCHED_HSDESC 22
-#define DIR_PURPOSE_MAX_ 22
+/** A dynhost client fetch: an application-issued HTTP GET to a .onion
+ * service via the internal dynhost client (see feature/dynhost/). The
+ * response is application data, never directory data — it must not be
+ * dispatched to any networkstatus/consensus handler. */
+#define DIR_PURPOSE_DYNHOST_FETCH 23
+#define DIR_PURPOSE_MAX_ 24
 
 /** True iff <b>p</b> is a purpose corresponding to uploading
  * data to a directory server. */
