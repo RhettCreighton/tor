@@ -2,6 +2,7 @@
 LIBTOR_APP_A_SOURCES += 				\
 	src/feature/dynhost/dynhost.c		\
 	src/feature/dynhost/dynhost_client.c	\
+	src/feature/dynhost/dynhost_stream.c	\
 	src/feature/dynhost/dynhost_handlers.c	\
 	src/feature/dynhost/dynhost_message.c	\
 	src/feature/dynhost/dynhost_webserver.c	\
@@ -12,6 +13,7 @@ LIBTOR_APP_A_SOURCES += 				\
 noinst_HEADERS +=					\
 	src/feature/dynhost/dynhost.h			\
 	src/feature/dynhost/dynhost_client.h		\
+	src/feature/dynhost/dynhost_stream.h		\
 	src/feature/dynhost/dynhost_handlers.h		\
 	src/feature/dynhost/dynhost_message.h		\
 	src/feature/dynhost/dynhost_webserver.h	\

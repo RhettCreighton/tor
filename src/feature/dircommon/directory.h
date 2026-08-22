@@ -75,7 +75,14 @@ const dir_connection_t *CONST_TO_DIR_CONN(const connection_t *c);
  * response is application data, never directory data — it must not be
  * dispatched to any networkstatus/consensus handler. */
 #define DIR_PURPOSE_DYNHOST_FETCH 23
-#define DIR_PURPOSE_MAX_ 24
+/** A dynhost raw byte stream: an application-issued bidirectional stream
+ * to a .onion service via the internal dynhost stream API (see
+ * feature/dynhost/dynhost_stream.c). The connection carries raw
+ * application bytes, never HTTP — connection_dir_process_inbuf() and
+ * connection_dir_reached_eof() hand it straight to the dynhost stream
+ * module without HTTP parsing or size limits. */
+#define DIR_PURPOSE_DYNHOST_STREAM 24
+#define DIR_PURPOSE_MAX_ 25
 
 /** True iff <b>p</b> is a purpose corresponding to uploading
  * data to a directory server. */

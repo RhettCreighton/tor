@@ -10,6 +10,7 @@
 #include "core/or/or.h"
 #include "feature/dynhost/dynhost.h"
 #include "feature/dynhost/dynhost_client.h"
+#include "feature/dynhost/dynhost_stream.h"
 #include "feature/dynhost/dynhost_message.h"
 #include "feature/hs/hs_service.h"
 #include "feature/hs/hs_common.h"
@@ -295,6 +296,9 @@ dynhost_run_scheduled_events(time_t now)
 
   /* Process any pending outbound .onion fetch requests */
   dynhost_client_process_pending();
+
+  /* Process pending raw stream opens, writes, and liveness checks */
+  dynhost_stream_process_pending();
 }
 
 /**

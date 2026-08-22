@@ -26,6 +26,7 @@
 #include "feature/dirauth/shared_random.h"
 #include "feature/dircache/dirserv.h"
 #include "feature/dynhost/dynhost_client.h"
+#include "feature/dynhost/dynhost_stream.h"
 #include "feature/dirclient/dirclient.h"
 #include "feature/dirclient/dirclient_modes.h"
 #include "feature/dirclient/dlstatus.h"
@@ -125,6 +126,8 @@ dir_conn_purpose_to_string(int purpose)
       return "microdescriptor fetch";
     case DIR_PURPOSE_DYNHOST_FETCH:
       return "dynhost application fetch";
+    case DIR_PURPOSE_DYNHOST_STREAM:
+      return "dynhost raw stream";
     }
 
   log_warn(LD_BUG, "Called with unknown purpose %d", purpose);
@@ -2856,6 +2859,14 @@ int
 connection_dir_reached_eof(dir_connection_t *conn)
 {
   int retval;
+  /* A dynhost raw byte stream carries application data, not an HTTP
+   * response: bypass the CLIENT_READING state check and the HTTP parsing
+   * below, hand any final bytes to the stream module, and close. */
+  if (conn->base_.purpose == DIR_PURPOSE_DYNHOST_STREAM) {
+    dynhost_stream_handle_eof(conn);
+    connection_mark_for_close(TO_CONN(conn));
+    return 0;
+  }
   if (conn->base_.state != DIR_CONN_STATE_CLIENT_READING) {
     log_info(LD_HTTP,"conn reached eof, not reading. [state=%d] Closing.",
              conn->base_.state);

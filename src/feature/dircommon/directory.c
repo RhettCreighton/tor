@@ -16,6 +16,7 @@
 #include "feature/dirclient/dirclient.h"
 #include "feature/dircommon/directory.h"
 #include "feature/dircommon/fp_pair.h"
+#include "feature/dynhost/dynhost_stream.h"
 #include "feature/hs/hs_cache.h"
 #include "feature/stats/geoip_stats.h"
 #include "lib/compress/compress.h"
@@ -146,6 +147,7 @@ purpose_needs_anonymity(uint8_t dir_purpose, uint8_t router_purpose,
     case DIR_PURPOSE_FETCH_HSDESC:
     case DIR_PURPOSE_UPLOAD_HSDESC:
     case DIR_PURPOSE_DYNHOST_FETCH:
+    case DIR_PURPOSE_DYNHOST_STREAM:
       return 1;
     case DIR_PURPOSE_SERVER:
     default:
@@ -463,6 +465,15 @@ connection_dir_process_inbuf(dir_connection_t *conn)
     return 0;
   }
 
+  /* A dynhost raw byte stream carries application data, not HTTP: drain
+   * the inbuf straight to the stream's read callback as bytes arrive.
+   * The max-size check below must not apply — a stream is long-lived and
+   * its inbuf is drained on every read event. */
+  if (conn->base_.purpose == DIR_PURPOSE_DYNHOST_STREAM) {
+    dynhost_stream_deliver_inbuf(conn);
+    return 0;
+  }
+
   max_size =
     (TO_CONN(conn)->purpose == DIR_PURPOSE_FETCH_STATUS_VOTE) ?
     MAX_VOTE_DL_SIZE : MAX_DIRECTORY_OBJECT_SIZE;
@@ -520,6 +531,16 @@ connection_dir_finished_flushing(dir_connection_t *conn)
 
   if (conn->base_.marked_for_close)
     return 0;
+
+  /* A dynhost raw byte stream flushes its outbuf every time the caller
+   * writes; that is normal operation, not the one-shot request/response
+   * lifecycle the states below model. Keep the state machine satisfied
+   * without treating repeated flushes as an error. */
+  if (conn->base_.purpose == DIR_PURPOSE_DYNHOST_STREAM) {
+    if (conn->base_.state == DIR_CONN_STATE_CLIENT_SENDING)
+      conn->base_.state = DIR_CONN_STATE_CLIENT_READING;
+    return 0;
+  }
 
   /* Note that we have finished writing the directory response. For direct
    * connections this means we're done; for tunneled connections it's only
