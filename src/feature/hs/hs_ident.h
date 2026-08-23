@@ -94,6 +94,15 @@ typedef struct hs_ident_dir_conn_t {
    * to fine control descriptor uploads. */
   ed25519_public_key_t blinded_pk;
 
+  /** Service-side descriptor upload generation. Zero identifies an upload
+   * initiated outside the managed service scheduler (for example HSPOST).
+   * The generation lets late results from a canceled request be ignored
+   * instead of corrupting the retry state for a newer upload round. */
+  uint64_t upload_generation;
+
+  /** True once this directory connection reported its upload outcome. */
+  unsigned int upload_result_reported : 1;
+
   /* XXX: Client authorization. */
 } hs_ident_dir_conn_t;
 

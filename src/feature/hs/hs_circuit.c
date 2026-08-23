@@ -1215,6 +1215,10 @@ hs_circ_service_rp_has_opened(const hs_service_t *service,
     goto done;
   }
 
+  log_notice(LD_REND,
+             "RENDEZVOUS1 sent; service rendezvous circuit %u joined",
+             TO_CIRCUIT(circ)->n_circ_id);
+
  done:
   memwipe(payload, 0, sizeof(payload));
 }
@@ -1510,6 +1514,9 @@ hs_circ_send_introduce1(origin_circuit_t *intro_circ,
              TO_CIRCUIT(intro_circ)->n_circ_id);
     goto done;
   }
+
+  log_notice(LD_REND, "INTRODUCE1 sent on client introduction circuit %u",
+             TO_CIRCUIT(intro_circ)->n_circ_id);
 
   /* Success. */
   ret = 0;

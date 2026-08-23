@@ -36,6 +36,7 @@
 #include "feature/hs/hs_cache.h"
 #include "feature/hs/hs_client.h"
 #include "feature/hs/hs_control.h"
+#include "feature/hs/hs_service.h"
 #include "feature/nodelist/authcert.h"
 #include "feature/nodelist/describe.h"
 #include "feature/nodelist/dirlist.h"
@@ -774,6 +775,11 @@ connection_dir_client_request_failed(dir_connection_t *conn)
     log_warn(LD_DIR, "Failed to post %s to %s.",
              dir_conn_purpose_to_string(conn->base_.purpose),
              connection_describe_peer(TO_CONN(conn)));
+  } else if (conn->base_.purpose == DIR_PURPOSE_UPLOAD_HSDESC) {
+    log_notice(LD_REND, "Hidden service descriptor upload request failed "
+               "before a response from %s",
+               connection_describe_peer(TO_CONN(conn)));
+    hs_service_desc_upload_result(conn->hs_ident, false);
   }
 }
 
@@ -2830,6 +2836,7 @@ handle_response_upload_hsdesc(dir_connection_t *conn,
     log_info(LD_REND, "Uploading hidden service descriptor: "
                       "finished with status 200 (%s)", escaped(reason));
     hs_control_desc_event_uploaded(conn->hs_ident, conn->identity_digest);
+    hs_service_desc_upload_result(conn->hs_ident, true);
     break;
   case 400:
     log_fn(LOG_PROTOCOL_WARN, LD_REND,
@@ -2839,6 +2846,7 @@ handle_response_upload_hsdesc(dir_connection_t *conn,
            escaped(reason), connection_describe_peer(TO_CONN(conn)));
     hs_control_desc_event_failed(conn->hs_ident, conn->identity_digest,
                                  "UPLOAD_REJECTED");
+    hs_service_desc_upload_result(conn->hs_ident, false);
     break;
   default:
     log_warn(LD_REND, "Uploading hidden service descriptor: http "
@@ -2848,6 +2856,7 @@ handle_response_upload_hsdesc(dir_connection_t *conn,
              connection_describe_peer(TO_CONN(conn)));
     hs_control_desc_event_failed(conn->hs_ident, conn->identity_digest,
                                  "UNEXPECTED");
+    hs_service_desc_upload_result(conn->hs_ident, false);
     break;
   }
 

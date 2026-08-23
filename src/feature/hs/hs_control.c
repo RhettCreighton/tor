@@ -238,7 +238,7 @@ hs_control_hspost_command(const char *body, const char *onion_address,
 
   SMARTLIST_FOREACH_BEGIN(hsdirs_rs, const routerstatus_t *, rs) {
     hs_service_upload_desc_to_dir(body, plaintext.version, &identity_pk,
-                                  &plaintext.blinded_pubkey, rs);
+                                  &plaintext.blinded_pubkey, rs, 0);
   } SMARTLIST_FOREACH_END(rs);
   ret = 0;
 

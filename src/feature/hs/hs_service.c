@@ -103,6 +103,12 @@ static const char dname_client_pubkeys[] = "authorized_clients";
 static const char fname_hostname[] = "hostname";
 static const char address_tld[] = "onion";
 
+/** A failed descriptor publication is retried promptly, then backed off to
+ * avoid hammering HSDirs during a sustained outage. The normal successful
+ * publication interval remains the protocol's randomized 60--120 minutes. */
+#define HS_SERVICE_UPLOAD_RETRY_MIN 5u
+#define HS_SERVICE_UPLOAD_RETRY_MAX 300u
+
 /** Staging list of service object. When configuring service, we add them to
  * this list considered a staging area and they will get added to our global
  * map once the keys have been loaded. These two steps are separated because
@@ -2368,6 +2374,96 @@ service_desc_schedule_upload(hs_service_descriptor_t *desc,
   }
 }
 
+/** Schedule the next complete upload round after a failed round. */
+static void
+service_desc_schedule_upload_retry(const hs_service_t *service,
+                                   hs_service_descriptor_t *desc,
+                                   time_t now)
+{
+  unsigned int delay = HS_SERVICE_UPLOAD_RETRY_MIN;
+  unsigned int shifts = MIN(desc->upload_retry_attempt, 6u);
+
+  while (shifts-- > 0 && delay < HS_SERVICE_UPLOAD_RETRY_MAX) {
+    delay = MIN(delay * 2u, HS_SERVICE_UPLOAD_RETRY_MAX);
+  }
+  if (desc->upload_retry_attempt < UINT_MAX) {
+    desc->upload_retry_attempt++;
+  }
+  desc->next_upload_time = now + (time_t) delay;
+
+  log_notice(LD_REND,
+             "Hidden service descriptor upload incomplete for %s "
+             "(%u/%u HSDirs confirmed); retry scheduled in %u seconds",
+             safe_str_client(service->onion_address),
+             desc->upload_requests_succeeded,
+             desc->upload_request_count, delay);
+}
+
+/** Record one terminal outcome from a managed descriptor upload request. */
+void
+hs_service_desc_upload_result(hs_ident_dir_conn_t *ident, bool success)
+{
+  hs_service_t *service;
+  hs_service_descriptor_t *matched = NULL;
+
+  if (!ident || ident->upload_result_reported) {
+    return;
+  }
+  ident->upload_result_reported = 1;
+
+  /* HSPOST and other callers outside the service scheduler deliberately use
+   * generation zero and retain their existing control-event-only behavior. */
+  if (ident->upload_generation == 0) {
+    return;
+  }
+
+  service = hs_service_find(&ident->identity_pk);
+  if (!service) {
+    return;
+  }
+  FOR_EACH_DESCRIPTOR_BEGIN(service, desc) {
+    if (ed25519_pubkey_eq(&desc->blinded_kp.pubkey,
+                          &ident->blinded_pk)) {
+      matched = desc;
+      break;
+    }
+  } FOR_EACH_DESCRIPTOR_END;
+
+  /* A replacement round can close older directory connections. Ignore their
+   * late callbacks rather than charging them to the live round. */
+  if (!matched || matched->upload_generation != ident->upload_generation ||
+      matched->upload_requests_pending == 0) {
+    return;
+  }
+
+  matched->upload_requests_pending--;
+  if (success) {
+    matched->upload_requests_succeeded++;
+    log_notice(LD_REND,
+               "Hidden service descriptor uploaded for %s "
+               "(%u/%u HSDirs confirmed)",
+               safe_str_client(service->onion_address),
+               matched->upload_requests_succeeded,
+               matched->upload_request_count);
+  }
+
+  if (matched->upload_requests_pending != 0) {
+    return;
+  }
+  if (matched->upload_requests_succeeded == matched->upload_request_count) {
+    matched->upload_retry_attempt = 0;
+    log_notice(LD_REND,
+               "Hidden service descriptor upload complete for %s "
+               "(%u/%u HSDirs confirmed)",
+               safe_str_client(service->onion_address),
+               matched->upload_requests_succeeded,
+               matched->upload_request_count);
+    return;
+  }
+
+  service_desc_schedule_upload_retry(service, matched, time(NULL));
+}
+
 /** Pick missing intro points for this descriptor if needed. */
 static void
 update_service_descriptor_intro_points(hs_service_t *service,
@@ -3156,7 +3252,8 @@ upload_descriptor_to_hsdir(const hs_service_t *service,
   /* Time to upload the descriptor to the directory. */
   hs_service_upload_desc_to_dir(encoded_desc, service->config.version,
                                 &service->keys.identity_pk,
-                                &desc->blinded_kp.pubkey, hsdir->rs);
+                                &desc->blinded_kp.pubkey, hsdir->rs,
+                                desc->upload_generation);
 
   /* Add this node to previous_hsdirs list */
   service_desc_note_upload(desc, hsdir);
@@ -3290,6 +3387,22 @@ upload_descriptor_to_all(const hs_service_t *service,
    * the spread store consensus parameter. */
   hs_get_responsible_hsdirs(&desc->blinded_kp.pubkey, desc->time_period_num,
                             service->desc_next == desc, 0, responsible_dirs);
+
+  /* Start a distinct result-accounting round before any request is issued.
+   * Zero is reserved for unscheduled HSPOST uploads. */
+  desc->upload_generation++;
+  if (desc->upload_generation == 0) {
+    desc->upload_generation++;
+  }
+  desc->upload_request_count = (unsigned int) smartlist_len(responsible_dirs);
+  desc->upload_requests_pending = desc->upload_request_count;
+  desc->upload_requests_succeeded = 0;
+
+  if (desc->upload_request_count == 0) {
+    service_desc_schedule_upload_retry(service, desc, time(NULL));
+    smartlist_free(responsible_dirs);
+    return;
+  }
 
   /** Clear list of previous hsdirs since we are about to upload to a new
    *  list. Let's keep it up to date. */
@@ -4018,7 +4131,8 @@ hs_service_upload_desc_to_dir(const char *encoded_desc,
                               const uint8_t version,
                               const ed25519_public_key_t *identity_pk,
                               const ed25519_public_key_t *blinded_pk,
-                              const routerstatus_t *hsdir_rs)
+                              const routerstatus_t *hsdir_rs,
+                              uint64_t upload_generation)
 {
   char version_str[4] = {0};
   directory_request_t *dir_req;
@@ -4032,6 +4146,7 @@ hs_service_upload_desc_to_dir(const char *encoded_desc,
   /* Setup the connection identifier. */
   memset(&ident, 0, sizeof(ident));
   hs_ident_dir_conn_init(identity_pk, blinded_pk, &ident);
+  ident.upload_generation = upload_generation;
 
   /* This is our resource when uploading which is used to construct the URL
    * with the version number: "/tor/hs/<version>/publish". */

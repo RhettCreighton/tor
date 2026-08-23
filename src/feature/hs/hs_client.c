@@ -2649,6 +2649,11 @@ hs_client_receive_rendezvous2(origin_circuit_t *circ,
            TO_CIRCUIT(circ)->n_circ_id);
 
   ret = handle_rendezvous2(circ, payload, payload_len);
+  if (ret == 0) {
+    log_notice(LD_REND,
+               "RENDEZVOUS2 received; client rendezvous circuit %u joined",
+               TO_CIRCUIT(circ)->n_circ_id);
+  }
 
  end:
   return ret;

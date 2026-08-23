@@ -166,6 +166,15 @@ typedef struct hs_service_descriptor_t {
   /** Mutable: When is the next time when we should upload the descriptor. */
   time_t next_upload_time;
 
+  /** Mutable: identity and result accounting for the current upload round.
+   * Directory callbacks use the generation to ignore stale results after a
+   * replacement round has canceled its predecessor. */
+  uint64_t upload_generation;
+  unsigned int upload_request_count;
+  unsigned int upload_requests_pending;
+  unsigned int upload_requests_succeeded;
+  unsigned int upload_retry_attempt;
+
   /** Mutable: Introduction points assign to this descriptor which contains
    * hs_service_intropoints_t object indexed by authentication key (the RSA key
    * if the node is legacy). */
@@ -400,7 +409,13 @@ void hs_service_upload_desc_to_dir(const char *encoded_desc,
                                    const uint8_t version,
                                    const ed25519_public_key_t *identity_pk,
                                    const ed25519_public_key_t *blinded_pk,
-                                   const routerstatus_t *hsdir_rs);
+                                   const routerstatus_t *hsdir_rs,
+                                   uint64_t upload_generation);
+
+/** Record exactly one directory response for a managed descriptor upload.
+ * Failed rounds are rescheduled with bounded backoff until every responsible
+ * HSDir in a round has confirmed the upload. */
+void hs_service_desc_upload_result(hs_ident_dir_conn_t *ident, bool success);
 
 hs_circuit_id_protocol_t
 hs_service_exports_circuit_id(const ed25519_public_key_t *pk);
