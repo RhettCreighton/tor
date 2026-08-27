@@ -30,6 +30,21 @@
 #include "feature/dynhost/dynhost_webserver.h"
 #include "lib/buf/buffers.h"
 
+#define DYNHOST_REASSEMBLY_CAP (1024u * 1024u)
+
+size_t
+dynhost_reassembly_cap(void)
+{
+  return DYNHOST_REASSEMBLY_CAP;
+}
+
+int
+dynhost_reassembly_admits(size_t accumulated, size_t incoming)
+{
+  return accumulated <= DYNHOST_REASSEMBLY_CAP &&
+         incoming <= DYNHOST_REASSEMBLY_CAP - accumulated;
+}
+
 /* Use accessor function to get global dynhost service */
 
 /**
@@ -253,6 +268,15 @@ dynhost_connection_handle_read(edge_connection_t *edge_conn)
   char tmp_buf[4096];
   while (available > 0) {
     size_t to_read = MIN(available, sizeof(tmp_buf));
+    size_t accumulated = buf_datalen(edge_conn->dynhost_reassembly_buf);
+    if (!dynhost_reassembly_admits(accumulated, to_read)) {
+      log_warn(LD_REND,
+               "Dynhost request exceeds %zu-byte reassembly cap; closing",
+               dynhost_reassembly_cap());
+      buf_clear(edge_conn->dynhost_reassembly_buf);
+      connection_mark_for_close(conn);
+      return -1;
+    }
     connection_buf_get_bytes(tmp_buf, to_read, conn);
     buf_add(edge_conn->dynhost_reassembly_buf, tmp_buf, to_read);
     available = connection_get_inbuf_len(conn);
