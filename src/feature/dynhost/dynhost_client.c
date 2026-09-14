@@ -37,6 +37,9 @@ typedef struct dynhost_fetch_request_t {
   /* Must hold the longest application path: the zclassic23 market chunk
    * path is /market/chunk/<412 hex chars>?slice=N — 434 bytes. */
   char path[512];
+  char method[8];               /* "GET" or "POST" (A-Z token, validated) */
+  uint8_t *body;                /* heap copy of the request body, or NULL */
+  size_t body_len;
   dynhost_client_callback_fn callback;
   void *ctx;
   time_t deadline;
@@ -77,14 +80,34 @@ ensure_mutex(void)
 /* ── Public API: queue a fetch request ─────────────────────── */
 
 int
-dynhost_client_fetch(const char *onion_address,
-                     uint16_t port,
-                     const char *path,
-                     dynhost_client_callback_fn callback,
-                     void *ctx,
-                     int timeout_secs)
+dynhost_client_fetch_ex(const char *onion_address,
+                        uint16_t port,
+                        const char *path,
+                        const char *method,
+                        const uint8_t *body,
+                        size_t body_len,
+                        dynhost_client_callback_fn callback,
+                        void *ctx,
+                        int timeout_secs)
 {
   if (!onion_address || !path || !callback)
+    return -1;
+  if (!method)
+    method = "GET";
+  /* The method lands on the request line verbatim, so it must be a bare
+   * token: A-Z only, and short enough to fit the request struct. Anything
+   * else (a space, a CRLF, punctuation) would let a caller smuggle extra
+   * request lines or headers into the fetch. */
+  size_t method_len = strlen(method);
+  if (method_len == 0 || method_len > 7)
+    return -1;
+  for (size_t i = 0; i < method_len; i++) {
+    if (method[i] < 'A' || method[i] > 'Z')
+      return -1;
+  }
+  if (body_len > DYNHOST_CLIENT_BODY_MAX)
+    return -1;
+  if (body_len > 0 && !body)
     return -1;
 
   ensure_mutex();
@@ -93,6 +116,12 @@ dynhost_client_fetch(const char *onion_address,
   strlcpy(req->onion_address, onion_address, sizeof(req->onion_address));
   req->port = port ? port : 80;
   strlcpy(req->path, path, sizeof(req->path));
+  strlcpy(req->method, method, sizeof(req->method));
+  if (body_len > 0) {
+    req->body = tor_malloc(body_len);
+    memcpy(req->body, body, body_len);
+    req->body_len = body_len;
+  }
   req->callback = callback;
   req->ctx = ctx;
   req->deadline = time(NULL) + (timeout_secs > 0 ? timeout_secs : 60);
@@ -109,28 +138,57 @@ dynhost_client_fetch(const char *onion_address,
   g_pending_head = req;
   tor_mutex_release(&g_queue_mutex);
 
-  log_notice(LD_REND, "Dynhost client: queued fetch for %s%s",
-             onion_address, path);
+  log_notice(LD_REND, "Dynhost client: queued %s fetch for %s%s",
+             req->method, onion_address, path);
   return 0;
+}
+
+int
+dynhost_client_fetch(const char *onion_address,
+                     uint16_t port,
+                     const char *path,
+                     dynhost_client_callback_fn callback,
+                     void *ctx,
+                     int timeout_secs)
+{
+  return dynhost_client_fetch_ex(onion_address, port, path, "GET", NULL, 0,
+                                 callback, ctx, timeout_secs);
 }
 
 /* ── Initiate a fetch (Tor thread only) ────────────────────── */
 
 /**
- * Write a minimal HTTP/1.0 GET request to the dir_connection's outbuf.
+ * Write a minimal HTTP/1.0 request to the dir_connection's outbuf.
+ * Emits Content-Length and the body when the request carries one.
  */
 static void
-write_http_get(dir_connection_t *conn, const char *host, const char *path)
+write_http_request(dir_connection_t *conn, const char *host,
+                   const char *path, const char *method,
+                   const uint8_t *body, size_t body_len)
 {
   char request[1024];
-  int n = tor_snprintf(request, sizeof(request),
-      "GET %s HTTP/1.0\r\n"
-      "Host: %s\r\n"
-      "Connection: close\r\n"
-      "\r\n",
-      path, host);
+  int n;
+  if (body && body_len > 0) {
+    n = tor_snprintf(request, sizeof(request),
+        "%s %s HTTP/1.0\r\n"
+        "Host: %s\r\n"
+        "Content-Type: application/x-www-form-urlencoded\r\n"
+        "Content-Length: %u\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        method, path, host, (unsigned)body_len);
+  } else {
+    n = tor_snprintf(request, sizeof(request),
+        "%s %s HTTP/1.0\r\n"
+        "Host: %s\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        method, path, host);
+  }
   if (n > 0) {
     connection_buf_add(request, (size_t)n, TO_CONN(conn));
+    if (body && body_len > 0)
+      connection_buf_add((const char *)body, body_len, TO_CONN(conn));
   }
 }
 
@@ -224,7 +282,8 @@ initiate_fetch(dynhost_fetch_request_t *req)
 
   /* Set state and write the HTTP request */
   dir_conn->base_.state = DIR_CONN_STATE_CLIENT_SENDING;
-  write_http_get(dir_conn, req->onion_address, req->path);
+  write_http_request(dir_conn, req->onion_address, req->path, req->method,
+                     req->body, req->body_len);
 
   connection_watch_events(TO_CONN(dir_conn), READ_EVENT | WRITE_EVENT);
   connection_start_reading(ENTRY_TO_CONN(linked_conn));
@@ -410,6 +469,7 @@ dynhost_client_process_pending(void)
       /* Failed to initiate — invoke callback with error */
       req->callback(-1, NULL, 0, req->ctx);
     }
+    tor_free(req->body);
     tor_free(req);
   }
 
@@ -433,6 +493,7 @@ dynhost_client_cleanup(void)
   while (p) {
     dynhost_fetch_request_t *next = p->next;
     p->callback(-1, NULL, 0, p->ctx);
+    tor_free(p->body);
     tor_free(p);
     p = next;
   }
